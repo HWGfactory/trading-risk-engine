@@ -31,7 +31,15 @@ export interface TraceStep {
   label: string
   formula: string
   value: Dec
+  /** 이 값이 의존하는 입력·설정값. 엔진이 알려주므로 프론트는 추측하지 않는다. */
+  inputs: TraceInput[]
 }
+
+/** 전표 입력 필드명과 설정값 키. backend linear.py의 TraceStep.inputs와 같은 어휘다. */
+export type TraceInput =
+  | 'entry_price' | 'mark_price' | 'quantity' | 'direction'
+  | 'commission_rate' | 'margin_rate' | 'market'
+  | 'multiplier' | 'tax_rate' | 'asset_class'
 
 export interface Valuation {
   entry_notional: Dec
@@ -160,8 +168,19 @@ export interface BookResponse {
   errors: string[]
 }
 
+export interface LimitUsage {
+  code: 'GROSS_EXPOSURE' | 'LOSS_LIMIT' | 'POSITION_NOTIONAL'
+  label: string
+  used: Dec
+  limit: Dec
+  /** used ÷ limit. 백엔드가 Decimal로 계산해 내려준다. */
+  ratio: Dec
+}
+
 export interface BookSummary {
   totals: Totals
   by_asset_class: Record<string, Totals>
   breaches: Breach[]
+  limit_usage: LimitUsage[]
+  last_valued_at: string | null
 }

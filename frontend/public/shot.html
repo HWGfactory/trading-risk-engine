@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>screenshot frame</title>
+  <!--
+    문서용 스크린샷을 정확한 뷰포트 크기로 찍기 위한 보조 페이지다.
+    Windows의 Chrome headless는 뷰포트를 500px 미만으로 줄이지 못하므로,
+    앱을 지정한 크기의 iframe에 담아 그 영역만 잘라낸다.
+    iframe은 그 자체가 뷰포트라 미디어쿼리가 지정한 폭 그대로 적용된다.
+
+    ?act= 로 특정 상태(빈 북, 로딩, 입력 오류, 근거 추적)까지 화면을 몰고 갈 수 있다.
+    backend/scripts/shoot_screenshots.py 와 shoot_states.py 가 이 페이지를 쓴다.
+  -->
+  <style>
+    html, body { margin: 0; padding: 0; background: #888; }
+    iframe { position: fixed; left: 0; top: 0; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <script type="module">
+    const q = new URLSearchParams(location.search)
+    const w = Number(q.get('w') || 1280)
+    const h = Number(q.get('h') || 900)
+    const theme = q.get('theme') || 'light'
+    const route = q.get('route') || '/'
+    const act = q.get('act')
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+    const f = document.createElement('iframe')
+    f.width = w
+    f.height = h
+    f.src = `/?theme=${encodeURIComponent(theme)}#${route}`
+    document.body.appendChild(f)
+
+    await new Promise((r) => f.addEventListener('load', r, { once: true }))
+    const d = f.contentDocument
+    const win = f.contentWindow
+
+    // 값을 React가 알아차리도록 네이티브 세터로 넣는다.
+    const setVal = (el, v) => {
+      const proto = el.tagName === 'SELECT' ? win.HTMLSelectElement.prototype : win.HTMLInputElement.prototype
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v)
+      el.dispatchEvent(new win.Event('input', { bubbles: true }))
+      el.dispatchEvent(new win.Event('change', { bubbles: true }))
+    }
+
+    if (act === 'empty' || act === 'loading') {
+      // 두 상태 모두 비어 있는 임시 DB를 띄운 백엔드를 상대로 찍는다.
+      // 화면에서 응답을 가로채 흉내 내지 않는다. 로딩은 캡처 시점을 앞당겨 잡는다.
+      win.location.hash = '#/valuation'
+      await sleep(150)
+      win.location.hash = '#/book'
+      await sleep(act === 'loading' ? 60 : 1500)
+    } else if (act === 'error') {
+      await sleep(1200)
+      setVal(d.getElementById('quantity'), '0')
+      setVal(d.getElementById('entryPrice'), 'abc')
+      await sleep(150)
+      d.querySelector('.btn-primary[type=submit]').click()
+      await sleep(600)
+    } else if (act === 'trace') {
+      await sleep(1200)
+      setVal(d.getElementById('ticker'), '005930')
+      setVal(d.getElementById('name'), '삼성전자')
+      setVal(d.getElementById('quantity'), '100')
+      setVal(d.getElementById('entryPrice'), '250000')
+      setVal(d.getElementById('markPrice'), '277500')
+      await sleep(1400)
+      // 거래세 줄에 키보드 포커스를 준다. 이 줄이 쓴 입력 칸이 전표에서 함께 강조된다.
+      // mouseenter는 버블링하지 않아 React가 받지 못하므로 포커스로 같은 상태를 만든다.
+      const rows = [...d.querySelectorAll('.ledger tbody tr')]
+      const tax = rows.find((r) => r.textContent.includes('거래세')) || rows[0]
+      tax.focus()
+      await sleep(600)
+    } else if (act === 'recon') {
+      await sleep(1400)
+      d.querySelector('.book .btn-primary')?.click()
+      await sleep(6000)
+    } else {
+      await sleep(1400)
+    }
+
+    document.title = 'ready'
+  </script>
+</body>
+</html>

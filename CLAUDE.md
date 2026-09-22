@@ -12,6 +12,10 @@
 - 백엔드: Python 3.11+, FastAPI, Pydantic v2, sqlite3(표준 라이브러리, ORM 없음), PyYAML, pytest
 - 시세: pykrx 1.2.9+ (네이버 수정주가 경로, 로그인 불필요), FinanceDataReader
 - 프론트: React 19 + TypeScript 6 + Vite 8 (Tailwind 없음, src/index.css 한 파일에 디자인 토큰)
+- 모션: motion (motion/react). 아이콘: @phosphor-icons/react 한 가족만
+- 글꼴: 자체 호스팅. 라틴·숫자는 geist 패키지의 가변 woff2, 한글은 @fontsource/ibm-plex-sans-kr
+  (unicode-range 조각 배포판). Google Fonts <link>를 쓰지 않는다
+- 스크린샷: 설치된 Chrome을 headless로 쓴다. Playwright를 설치하지 않는다
 - 계산 라이브러리(2단계부터): QuantLib-Python
 
 ## 실행 (Windows PowerShell)
@@ -45,16 +49,33 @@ backend/
     repository.py   SQL 접근 계층
     schema.sql      테이블·뷰·감사 트리거
   tests/            pytest (엔진 정답 케이스, API 통합, 시세 폴백)
-frontend/src/
-  App.tsx           헤더·탭·전역 상태
-  api.ts            fetch 래퍼, 오류 메시지 정규화
-  types.ts          백엔드 schemas.py와 1:1 대응 타입
-  format.ts         표시용 포맷, 퍼센트↔비율 문자열 변환
-  components/
-    DealTicket.tsx          매매 전표 입력
-    ValuationStatement.tsx  결과·계산 근거 표
-    BookView.tsx            북 현황·재평가·대사
+  scripts/
+    seed_demo.py          시연용 예시 북 (TestClient로 API를 그대로 통과)
+    shoot_screenshots.py  문서용 스크린샷 (Chrome headless)
+    shoot_states.py       빈 북·로딩·오류·근거 추적·대사 상태 스크린샷
+frontend/
+  public/shot.html  스크린샷용 보조 페이지 (정확한 뷰포트 크기의 iframe)
+  src/
+    App.tsx           셸, 라우트별 페이지, 평가 상태
+    router.ts         해시 라우팅 (#/ , #/valuation , #/book)
+    theme.ts          라이트·다크 선택 (시스템 기본 + localStorage)
+    trace.ts          근거 추적 상태 (TraceStep.inputs만 보고 동작)
+    api.ts            fetch 래퍼, 오류 메시지 정규화
+    types.ts          백엔드 schemas.py와 1:1 대응 타입
+    format.ts         표시용 포맷, 퍼센트↔비율 문자열 변환
+    fonts.css         자체 호스팅 @font-face
+    index.css         디자인 토큰과 전체 스타일 (DESIGN.md가 근거)
+    components/
+      Nav.tsx                 워드마크·메뉴·테마 전환
+      Home.tsx                홈 (히어로, 오늘의 북, 증거 섹션)
+      MiniEvaluator.tsx       홈 히어로의 실제 평가기
+      DealTicket.tsx          매매 전표 입력
+      ValuationStatement.tsx  결과·계산 근거 표
+      BookView.tsx            북 현황·재평가·대사
+      AnimatedWon.tsx         숫자 전환 (마지막 프레임은 백엔드 문자열 그대로)
+DESIGN.md           색·글꼴·간격·모션의 결정과 근거
 METHODOLOGY.md      산식과 근거, 손계산 예시 (테스트 기대값의 출처)
+docs/screenshots/   문서용 스크린샷 (3화면 x 1280/375 x 라이트/다크 + 상태 5종)
 ```
 
 ## 개발 규칙 (반드시 지킬 것)
@@ -74,6 +95,15 @@ METHODOLOGY.md      산식과 근거, 손계산 예시 (테스트 기대값의 �
 10. 화면 문구는 한국어, 문장형. 한국 시장 관행대로 매수·이익은 빨강(--gain), 매도·손실은 파랑(--loss).
     두 색은 의미 전달에만 쓴다. 숫자는 tabular-nums.
 11. 커밋 전 확인: `python -m pytest` 전부 통과, `npm run build`와 `npm run lint` 오류 0.
+12. 디자인은 DESIGN.md를 따른다. 특히 세 가지를 지킨다.
+    (a) 빨강은 매수·이익, 파랑은 매도·손실 전용이다. 강조색·포커스·오류에 쓰지 않는다.
+        오류와 경고는 오커(--alert) 계열이고, 색만이 아니라 아이콘과 문구로도 구분한다.
+    (b) 반경은 컨트롤 6px(--r-control), 패널 10px(--r-panel) 둘뿐이다. z-index는 정의된 4단계만 쓴다.
+    (c) 모션은 transform과 opacity만 애니메이션하고 무한 반복을 쓰지 않는다.
+        prefers-reduced-motion에서는 이동만 없애고 상태 변화는 남긴다.
+13. 화면 문구에 엠대시(U+2014)와 엔대시(U+2013)를 쓰지 않는다. 음수 부호(U+2212)는 수학 기호라 허용한다.
+    값이 없을 때는 format.ts의 EMPTY('-')를 쓴다.
+14. 근거 줄을 추가하면 TraceStep의 inputs도 함께 채운다. 화면의 근거 추적이 그 목록만 보고 동작한다.
 
 ## 알아둘 제약
 - pykrx는 import 시 "KRX 로그인 실패" 안내를 출력하지만 오류가 아니다. 수정주가 조회는 로그인 없이 된다.

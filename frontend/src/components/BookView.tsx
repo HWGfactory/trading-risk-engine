@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { TrayIcon, WarningCircleIcon } from '@phosphor-icons/react'
+import { useEffect, useRef, useState } from 'react'
 import { api, messagesOf } from '../api'
 import {
   assetLabel, directionLabel, formatPrice, formatSignedWon, formatWon, isNumeric, tone,
@@ -7,6 +8,7 @@ import type { BookResponse, BookSummary, Position, Totals } from '../types'
 
 interface Props {
   refreshKey: number
+  onGoToValuation: () => void
 }
 
 interface Row {
@@ -17,13 +19,17 @@ interface Row {
   stale: boolean
 }
 
-export default function BookView({ refreshKey }: Props) {
+const RECON_LABEL = { MATCHED: '일치', MISMATCHED: '불일치', SKIPPED: '건너뜀' } as const
+
+export default function BookView({ refreshKey, onGoToValuation }: Props) {
   const [positions, setPositions] = useState<Position[]>([])
   const [summary, setSummary] = useState<BookSummary | null>(null)
   const [run, setRun] = useState<BookResponse | null>(null)
   const [marks, setMarks] = useState<Record<number, string>>({})
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [errors, setErrors] = useState<string[]>([])
+  const settledRun = useRef<string | null>(null)
 
   const [reloadTick, setReloadTick] = useState(0)
   const reload = () => setReloadTick((t) => t + 1)
@@ -40,9 +46,10 @@ export default function BookView({ refreshKey }: Props) {
       .catch((err) => {
         if (!cancelled) setErrors(messagesOf(err))
       })
-    return () => {
-      cancelled = true
-    }
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
   }, [refreshKey, reloadTick])
 
   async function revalue() {
@@ -55,7 +62,9 @@ export default function BookView({ refreshKey }: Props) {
     setBusy(true)
     setErrors([])
     try {
-      setRun(await api.revalue(payload))
+      const r = await api.revalue(payload)
+      setRun(r)
+      settledRun.current = r.run_id
       reload()
     } catch (err) {
       setErrors(messagesOf(err))
@@ -98,6 +107,9 @@ export default function BookView({ refreshKey }: Props) {
   const byClass = run?.by_asset_class ?? summary?.by_asset_class ?? {}
   const breaches = run?.breaches ?? summary?.breaches ?? []
   const allErrors = [...errors, ...(run?.errors ?? [])]
+  const justRevalued = run !== null && settledRun.current === run.run_id
+
+  if (loading) return <BookSkeleton />
 
   return (
     <section className="book">
@@ -105,7 +117,8 @@ export default function BookView({ refreshKey }: Props) {
         <p className="book-note">
           주식은 저장된 종목코드로 종가를 조회하고, 선물은 평가가격 칸에 입력한 값으로 평가합니다.
         </p>
-        <button type="button" className="btn-primary" onClick={revalue} disabled={busy || positions.length === 0}>
+        <button type="button" className="btn btn-primary" onClick={revalue}
+          disabled={busy || positions.length === 0}>
           {busy ? '평가 중' : '전체 재평가'}
         </button>
       </div>
@@ -114,30 +127,56 @@ export default function BookView({ refreshKey }: Props) {
         <dl className="strip">
           <div><dt>총노출</dt><dd>{formatWon(totals.gross_exposure)}</dd></div>
           <div><dt>순노출</dt><dd>{formatSignedWon(totals.net_exposure)}</dd></div>
-          <div><dt>순손익</dt><dd className={`tone-${tone(totals.net_pnl)}`}>{formatSignedWon(totals.net_pnl)}</dd></div>
+          <div>
+            <dt>순손익</dt>
+            <dd className={`tone-${tone(totals.net_pnl)}`}>{formatSignedWon(totals.net_pnl)}</dd>
+          </div>
           <div>
             <dt>엔진·SQL 대사</dt>
-            <dd className={run?.reconciliation.status === 'MISMATCHED' ? 'tone-warn' : undefined}
-              title={run?.reconciliation.detail}>
-              {run ? { MATCHED: '일치', MISMATCHED: '불일치', SKIPPED: '건너뜀' }[run.reconciliation.status] : '재평가 후 표시'}
+            <dd className="is-text" title={run?.reconciliation.detail}>
+              {busy ? (
+                <span className="badge">대사 중</span>
+              ) : run ? (
+                <span className={`badge ${run.reconciliation.status === 'MATCHED' ? 'is-ok' : 'is-warn'}`}>
+                  {RECON_LABEL[run.reconciliation.status]}
+                </span>
+              ) : (
+                <span className="badge">재평가 후 표시</span>
+              )}
             </dd>
           </div>
         </dl>
       )}
 
       {breaches.length > 0 && (
-        <ul className="alerts alerts-limit" role="alert">
-          {breaches.map((b) => <li key={b.code + b.message}>한도 초과: {b.message}</li>)}
+        <ul className="alerts">
+          {breaches.map((b) => (
+            <li className="alert" key={b.code + b.message} role="alert">
+              <WarningCircleIcon size={15} weight="fill" aria-hidden />
+              <span>한도 초과: {b.message}</span>
+            </li>
+          ))}
         </ul>
       )}
       {allErrors.length > 0 && (
-        <ul className="alerts" role="alert">
-          {allErrors.map((m) => <li key={m}>{m}</li>)}
+        <ul className="alerts">
+          {allErrors.map((m) => (
+            <li className="alert" key={m} role="alert">
+              <WarningCircleIcon size={15} weight="fill" aria-hidden />
+              <span>{m}</span>
+            </li>
+          ))}
         </ul>
       )}
 
       {positions.length === 0 ? (
-        <p className="empty">북이 비어 있습니다. 포지션 평가 화면에서 북에 추가를 누르세요.</p>
+        <div className="empty">
+          <TrayIcon size={28} weight="light" aria-hidden />
+          <p>북이 비어 있습니다. 포지션을 평가한 뒤 북에 추가하면 여기에 쌓입니다.</p>
+          <button type="button" className="btn btn-secondary" onClick={onGoToValuation}>
+            포지션 평가하기
+          </button>
+        </div>
       ) : (
         <div className="table-wrap">
           <table className="grid">
@@ -157,27 +196,35 @@ export default function BookView({ refreshKey }: Props) {
             <tbody>
               {positions.map((p) => {
                 const r = rowFor(p)
+                const settled = justRevalued
+                  && run?.positions.some((x) => x.position_id === p.id)
                 return (
                   <tr key={p.id}>
                     <td>
                       <span className="cell-main">{p.name ?? p.symbol}</span>
                       <span className="cell-sub">{assetLabel(p.asset_class)} {p.symbol}</span>
                     </td>
-                    <td className={p.direction === 'LONG' ? 'tone-gain' : 'tone-loss'}>{directionLabel(p.direction)}</td>
+                    <td className={p.direction === 'LONG' ? 'tone-gain' : 'tone-loss'}>
+                      {directionLabel(p.direction)}
+                    </td>
                     <td className="num">{formatWon(String(p.quantity))}</td>
                     <td className="num">{formatPrice(p.entry_price)}</td>
                     <td className="num">
                       {p.asset_class === 'FUTURE' ? (
-                        <input className="mark-input" inputMode="decimal" aria-label={`${p.symbol} 평가가격`}
+                        <input className="mark-input" inputMode="decimal"
+                          aria-label={`${p.symbol} 평가가격`}
                           placeholder={r.mark ?? '입력'} value={marks[p.id] ?? ''}
                           onChange={(e) => setMarks((m) => ({ ...m, [p.id]: e.target.value }))} />
                       ) : formatPrice(r.mark)}
                     </td>
-                    <td className={`num tone-${tone(r.netPnl)}`}>{formatSignedWon(r.netPnl)}</td>
+                    <td className={`num tone-${tone(r.netPnl)}${settled ? ' row-settled' : ''}`}>
+                      {formatSignedWon(r.netPnl)}
+                    </td>
                     <td className="num">{formatWon(r.costs)}</td>
                     <td className={r.stale ? 'cell-basis is-stale' : 'cell-basis'}>{r.basis}</td>
                     <td>
-                      <button type="button" className="btn-text" onClick={() => close(p.id)} disabled={busy}>
+                      <button type="button" className="btn-quiet" onClick={() => close(p.id)}
+                        disabled={busy}>
                         청산 처리
                       </button>
                     </td>
@@ -216,6 +263,41 @@ export default function BookView({ refreshKey }: Props) {
           </table>
         </div>
       )}
+    </section>
+  )
+}
+
+/** 최종 모양과 같은 자리를 차지하는 스켈레톤. 원형 스피너는 쓰지 않는다. */
+function BookSkeleton() {
+  return (
+    <section className="book" aria-busy="true" aria-label="북 현황을 불러오는 중">
+      <div className="book-bar">
+        <span className="skeleton" style={{ width: '32ch', height: 18 }}>불러오는 중</span>
+        <span className="skeleton" style={{ width: 96, height: 36 }} />
+      </div>
+      <dl className="strip">
+        {['총노출', '순노출', '순손익', '엔진·SQL 대사'].map((label) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd><span className="skeleton" style={{ width: '9ch', display: 'inline-block' }}>0</span></dd>
+          </div>
+        ))}
+      </dl>
+      <div className="table-wrap">
+        <table className="grid">
+          <tbody>
+            {[0, 1, 2].map((i) => (
+              <tr key={i}>
+                <td><span className="skeleton" style={{ width: '10ch', display: 'inline-block' }}>0</span></td>
+                <td><span className="skeleton" style={{ width: '4ch', display: 'inline-block' }}>0</span></td>
+                <td className="num"><span className="skeleton" style={{ width: '8ch', display: 'inline-block' }}>0</span></td>
+                <td className="num"><span className="skeleton" style={{ width: '10ch', display: 'inline-block' }}>0</span></td>
+                <td className="num"><span className="skeleton" style={{ width: '10ch', display: 'inline-block' }}>0</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   )
 }

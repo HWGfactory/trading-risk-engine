@@ -5,7 +5,8 @@ import type { Dec, Direction } from './types'
 
 export type Tone = 'gain' | 'loss' | 'flat'
 
-const MINUS = '−'
+const MINUS = '−'          // U+2212 수학 마이너스. 하이픈이 아니다.
+const EMPTY = '-'          // 값이 없을 때. 엠대시는 쓰지 않는다.
 const won = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 })
 const price = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
 
@@ -17,25 +18,25 @@ export function tone(v: Dec | null | undefined): Tone {
 }
 
 export function formatWon(v: Dec | null | undefined): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return EMPTY
   const n = Number(v)
   return n < 0 ? `${MINUS}${won.format(-n)}` : won.format(n)
 }
 
 export function formatSignedWon(v: Dec | null | undefined): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return EMPTY
   const n = Number(v)
   if (n > 0) return `+${won.format(n)}`
   return formatWon(v)
 }
 
 export function formatPrice(v: Dec | null | undefined): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return EMPTY
   return price.format(Number(v))
 }
 
 export function formatRatio(v: Dec | null | undefined, digits = 2): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return EMPTY
   const pct = Number(v) * 100
   const body = Math.abs(pct).toFixed(digits)
   if (pct > 0) return `+${body}%`
@@ -44,7 +45,7 @@ export function formatRatio(v: Dec | null | undefined, digits = 2): string {
 }
 
 export function formatRate(v: Dec | null | undefined): string {
-  if (v === null || v === undefined) return '—'
+  if (v === null || v === undefined) return EMPTY
   return `${Number((Number(v) * 100).toPrecision(10))}%`
 }
 
@@ -83,3 +84,20 @@ export function shiftDecimal(value: string, places: number): string {
 
 export const percentToRate = (percent: string) => shiftDecimal(percent, -2)
 export const rateToPercent = (rate: string) => shiftDecimal(rate, 2)
+
+// 마지막 평가 시각을 "4분 전" 같은 상대 표기로. 표시 전용이다.
+export function relativeTime(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return '아직 평가하지 않음'
+  // 백엔드는 UTC 기준 "YYYY-MM-DD HH:MM:SS" 형식으로 준다.
+  const ms = Date.parse(iso.replace(' ', 'T') + (iso.endsWith('Z') ? '' : 'Z'))
+  if (Number.isNaN(ms)) return iso
+  const sec = Math.max(0, Math.round((now - ms) / 1000))
+  if (sec < 60) return '방금 전'
+  if (sec < 3600) return `${Math.floor(sec / 60)}분 전`
+  if (sec < 86400) return `${Math.floor(sec / 3600)}시간 전`
+  return `${Math.floor(sec / 86400)}일 전`
+}
+
+// 한도 사용률을 막대 길이(px)로. 계산이 아니라 표시 치수 변환이다.
+export const usageBarWidth = (ratio: Dec, max = 72): number =>
+  Math.max(2, Math.min(max, Math.round(Number(ratio) * max)))

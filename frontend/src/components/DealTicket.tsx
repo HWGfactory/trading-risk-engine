@@ -1,15 +1,21 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { CheckCircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 import { api, messagesOf } from '../api'
 import { formatPrice, isNumeric, percentToRate, rateToPercent } from '../format'
+import { tracedClass } from '../trace'
+import type { TraceApi } from '../trace'
 import type {
-  AssetClass, Direction, Market, PositionCreate, Quote, Reference, TradeTerms, ValuationRequest,
+  AssetClass, Direction, Market, PositionCreate, Quote, Reference, TraceInput, TradeTerms,
+  ValuationRequest,
 } from '../types'
 
 interface Props {
   reference: Reference
   busy: boolean
-  onEvaluate: (req: ValuationRequest) => void
+  trace: TraceApi
+  addedName: string | null
+  onEvaluate: (req: ValuationRequest, live: boolean) => void
   onAddToBook: (req: PositionCreate) => void
 }
 
@@ -28,9 +34,26 @@ interface TicketForm {
   marginPct: string
 }
 
-type Built<T> = { ok: true; value: T } | { ok: false; errors: string[] }
+type Built<T> = { ok: true; value: T } | { ok: false; errors: Record<string, string> }
 
-export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }: Props) {
+/** role="radio"를 쓰면 화살표키로 선택이 옮겨져야 한다. 로빙 tabindex도 함께 둔다. */
+function useRadioGroup<T extends string>(values: readonly T[], current: T, set: (v: T) => void) {
+  return (e: KeyboardEvent) => {
+    const i = values.indexOf(current)
+    let next = i
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % values.length
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (i - 1 + values.length) % values.length
+    else return
+    e.preventDefault()
+    set(values[next])
+    const group = (e.currentTarget as HTMLElement).closest('[role=radiogroup]')
+    group?.querySelectorAll<HTMLButtonElement>('[role=radio]')[next]?.focus()
+  }
+}
+
+export default function DealTicket({
+  reference, busy, trace, addedName, onEvaluate, onAddToBook,
+}: Props) {
   const [form, setForm] = useState<TicketForm>(() => ({
     assetClass: 'EQUITY',
     direction: 'LONG',
@@ -47,7 +70,9 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
   }))
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteBusy, setQuoteBusy] = useState(false)
-  const [errors, setErrors] = useState<string[]>([])
+  const [quoteError, setQuoteError] = useState<string[]>([])
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [markFilled, setMarkFilled] = useState(false)
 
   const set = <K extends keyof TicketForm>(key: K, value: TicketForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -55,31 +80,17 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
   const isEquity = form.assetClass === 'EQUITY'
   const contract = reference.contracts.find((c) => c.code === form.contractCode)
 
-  async function loadQuote() {
-    setErrors([])
-    setQuoteBusy(true)
-    try {
-      const q = await api.quote(form.ticker)
-      setQuote(q)
-      setForm((f) => ({ ...f, ticker: q.ticker, markPrice: q.close, name: q.name ?? f.name }))
-    } catch (err) {
-      setQuote(null)
-      setErrors(messagesOf(err))
-    } finally {
-      setQuoteBusy(false)
-    }
-  }
-
   function buildTerms(): Built<TradeTerms> {
-    const errs: string[] = []
+    const errs: Record<string, string> = {}
     const qty = Number(form.quantity)
-    if (!Number.isInteger(qty) || qty <= 0) errs.push('수량은 1 이상의 정수로 입력하세요.')
-    if (!isNumeric(form.entryPrice)) errs.push('진입가를 숫자로 입력하세요.')
-    if (!isNumeric(form.commissionPct)) errs.push('수수료율을 숫자로 입력하세요. 없으면 0.')
+    if (form.quantity.trim() === '') errs.quantity = '수량을 입력하세요.'
+    else if (!Number.isInteger(qty) || qty <= 0) errs.quantity = '1 이상의 정수로 입력하세요.'
+    if (!isNumeric(form.entryPrice)) errs.entryPrice = '진입가를 숫자로 입력하세요.'
+    if (!isNumeric(form.commissionPct)) errs.commissionPct = '숫자로 입력하세요. 없으면 0.'
     if (!isEquity && form.marginPct.trim() !== '' && !isNumeric(form.marginPct)) {
-      errs.push('증거금률은 숫자로 입력하거나 비워 두세요.')
+      errs.marginPct = '숫자로 입력하거나 비워 두세요.'
     }
-    if (errs.length) return { ok: false, errors: errs }
+    if (Object.keys(errs).length) return { ok: false, errors: errs }
     return {
       ok: true,
       value: {
@@ -95,42 +106,123 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
     }
   }
 
+  // 입력이 유효해지면 300ms 뒤 자동 평가한다. 버튼은 명시적 재평가용으로 남는다.
+  const liveRef = useRef(onEvaluate)
+  liveRef.current = onEvaluate
+  useEffect(() => {
+    const terms = buildTerms()
+    if (!terms.ok || !isNumeric(form.markPrice)) return
+    const id = setTimeout(() => {
+      liveRef.current({ ...terms.value, mark_price: form.markPrice.trim() }, true)
+    }, 300)
+    return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.assetClass, form.direction, form.quantity, form.entryPrice, form.markPrice,
+      form.commissionPct, form.marginPct, form.market, form.contractCode])
+
+  async function loadQuote() {
+    setQuoteError([])
+    setQuoteBusy(true)
+    try {
+      const q = await api.quote(form.ticker)
+      setQuote(q)
+      setForm((f) => ({ ...f, ticker: q.ticker, markPrice: q.close, name: q.name ?? f.name }))
+      setMarkFilled(true)
+      setTimeout(() => setMarkFilled(false), 600)
+    } catch (err) {
+      setQuote(null)
+      setQuoteError(messagesOf(err))
+    } finally {
+      setQuoteBusy(false)
+    }
+  }
+
   function evaluate(e: FormEvent) {
     e.preventDefault()
     const terms = buildTerms()
-    const errs = terms.ok ? [] : terms.errors
-    if (!isNumeric(form.markPrice)) errs.push('평가가격을 입력하세요. 주식은 시세 조회로 채울 수 있습니다.')
+    const errs = terms.ok ? {} : { ...terms.errors }
+    if (!isNumeric(form.markPrice)) {
+      errs.markPrice = '평가가격을 입력하세요. 주식은 시세 조회로 채울 수 있습니다.'
+    }
     setErrors(errs)
-    if (terms.ok && errs.length === 0) onEvaluate({ ...terms.value, mark_price: form.markPrice.trim() })
+    if (terms.ok && Object.keys(errs).length === 0) {
+      onEvaluate({ ...terms.value, mark_price: form.markPrice.trim() }, false)
+    } else {
+      focusFirstError(errs)
+    }
   }
 
   function addToBook() {
     const terms = buildTerms()
-    const errs = terms.ok ? [] : terms.errors
+    const errs = terms.ok ? {} : { ...terms.errors }
     const symbol = isEquity ? form.ticker.trim() : form.futureSymbol.trim() || (contract?.name ?? '')
-    if (isEquity && !/^[0-9A-Za-z]{6}$/.test(symbol)) errs.push('종목코드 6자리를 입력하세요.')
+    if (isEquity && !/^[0-9A-Za-z]{6}$/.test(symbol)) errs.ticker = '종목코드 6자리를 입력하세요.'
     setErrors(errs)
-    if (terms.ok && errs.length === 0) {
-      onAddToBook({ ...terms.value, symbol, name: isEquity ? form.name.trim() || null : contract?.name ?? null })
+    if (terms.ok && Object.keys(errs).length === 0) {
+      onAddToBook({
+        ...terms.value, symbol,
+        name: isEquity ? form.name.trim() || null : contract?.name ?? null,
+      })
+    } else {
+      focusFirstError(errs)
     }
   }
 
+  function focusFirstError(errs: Record<string, string>) {
+    const first = Object.keys(errs)[0]
+    if (first) document.getElementById(first)?.focus()
+  }
+
+  const fieldProps = (id: string, input: TraceInput) => ({
+    className: `field${tracedClass(trace.isInputTraced(input))}`,
+    onFocusCapture: () => trace.focusInput(input),
+    onBlurCapture: trace.clear,
+    onMouseEnter: () => trace.focusInput(input),
+    onMouseLeave: trace.clear,
+    'data-trace': input,
+    key: id,
+  })
+
+  const errorFor = (id: string) => errors[id]
+  const inputA11y = (id: string) => ({
+    id,
+    'aria-invalid': errorFor(id) ? true : undefined,
+    'aria-describedby': errorFor(id) ? `${id}-error` : undefined,
+  })
+  const ErrorText = ({ id }: { id: string }) =>
+    errorFor(id) ? (
+      <span className="field-error" id={`${id}-error`}>
+        <WarningCircleIcon size={13} weight="fill" aria-hidden />{errorFor(id)}
+      </span>
+    ) : null
+
+  const onDirKey = useRadioGroup(['LONG', 'SHORT'] as const, form.direction, (d) => set('direction', d))
+  const onAssetKey = useRadioGroup(['EQUITY', 'FUTURE'] as const, form.assetClass, (a) => {
+    set('assetClass', a); setQuote(null)
+  })
+
   const sideClass = form.direction === 'LONG' ? 'is-buy' : 'is-sell'
+  const canQuote = form.ticker.trim().length === 6
 
   return (
-    <form className={`ticket ${sideClass}`} onSubmit={evaluate} noValidate>
-      <div className="segmented" role="radiogroup" aria-label="방향">
+    <form className={`panel ticket ${sideClass}`} onSubmit={evaluate} noValidate>
+      <div className={`segmented seg-group${tracedClass(trace.isInputTraced('direction'))}`}
+        role="radiogroup" aria-label="방향" onKeyDown={onDirKey}>
         {(['LONG', 'SHORT'] as const).map((d) => (
           <button key={d} type="button" role="radio" aria-checked={form.direction === d}
-            className={`seg seg-${d === 'LONG' ? 'buy' : 'sell'}`} onClick={() => set('direction', d)}>
+            tabIndex={form.direction === d ? 0 : -1}
+            className={`seg seg-${d === 'LONG' ? 'buy' : 'sell'}`}
+            onClick={() => set('direction', d)}>
             {d === 'LONG' ? '매수' : '매도'}
           </button>
         ))}
       </div>
 
-      <div className="segmented segmented-quiet" role="radiogroup" aria-label="상품">
+      <div className="segmented segmented-quiet" role="radiogroup" aria-label="상품"
+        onKeyDown={onAssetKey}>
         {(['EQUITY', 'FUTURE'] as const).map((a) => (
           <button key={a} type="button" role="radio" aria-checked={form.assetClass === a}
+            tabIndex={form.assetClass === a ? 0 : -1}
             className="seg" onClick={() => { set('assetClass', a); setQuote(null) }}>
             {a === 'EQUITY' ? '주식' : '선물'}
           </button>
@@ -142,28 +234,41 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
           <div className="field">
             <label htmlFor="ticker">종목코드</label>
             <div className="field-row">
-              <input id="ticker" inputMode="text" maxLength={6} placeholder="005930" value={form.ticker}
-                onChange={(e) => set('ticker', e.target.value.toUpperCase())} />
-              <button type="button" className="btn-secondary" onClick={loadQuote}
-                disabled={quoteBusy || form.ticker.trim().length !== 6}>
+              <input {...inputA11y('ticker')} inputMode="text" maxLength={6} placeholder="005930"
+                value={form.ticker} onChange={(e) => set('ticker', e.target.value.toUpperCase())} />
+              <button type="button" className="btn btn-secondary" onClick={loadQuote}
+                disabled={quoteBusy || !canQuote}>
                 {quoteBusy ? '조회 중' : '시세 조회'}
               </button>
             </div>
+            <ErrorText id="ticker" />
+            {!canQuote && !errorFor('ticker') && (
+              <p className="hint">6자리를 넣으면 종가를 조회할 수 있습니다.</p>
+            )}
             {quote && (
               <p className={`hint ${quote.is_stale ? 'hint-warn' : ''}`}>
-                {quote.name ?? quote.ticker} 종가 {formatPrice(quote.close)}원, {quote.as_of} 기준, 출처 {quote.source}
+                {quote.name ?? quote.ticker} 종가 {formatPrice(quote.close)}원, {quote.as_of} 기준
+                {`, 출처 ${quote.source}`}
                 {quote.is_stale && '. 최근 거래일 종가가 아닙니다. 거래정지 여부를 확인하세요.'}
               </p>
             )}
+            {quoteError.map((m) => (
+              <span className="field-error" key={m}>
+                <WarningCircleIcon size={13} weight="fill" aria-hidden />{m}
+              </span>
+            ))}
           </div>
+
           <div className="field-pair">
             <div className="field">
               <label htmlFor="name">종목명</label>
-              <input id="name" placeholder="선택 입력" value={form.name} onChange={(e) => set('name', e.target.value)} />
+              <input id="name" placeholder="선택 입력" value={form.name}
+                onChange={(e) => set('name', e.target.value)} />
             </div>
-            <div className="field">
+            <div {...fieldProps('market', 'market')}>
               <label htmlFor="market">시장</label>
-              <select id="market" value={form.market} onChange={(e) => set('market', e.target.value as Market)}>
+              <select id="market" value={form.market}
+                onChange={(e) => set('market', e.target.value as Market)}>
                 <option value="KOSPI">코스피</option>
                 <option value="KOSDAQ">코스닥</option>
               </select>
@@ -172,9 +277,10 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
         </>
       ) : (
         <>
-          <div className="field">
+          <div {...fieldProps('contract', 'multiplier')}>
             <label htmlFor="contract">계약</label>
-            <select id="contract" value={form.contractCode} onChange={(e) => set('contractCode', e.target.value)}>
+            <select id="contract" value={form.contractCode}
+              onChange={(e) => set('contractCode', e.target.value)}>
               {reference.contracts.map((c) => (
                 <option key={c.code} value={c.code}>{c.name}</option>
               ))}
@@ -195,46 +301,66 @@ export default function DealTicket({ reference, busy, onEvaluate, onAddToBook }:
       )}
 
       <div className="field-pair">
-        <div className="field">
+        <div {...fieldProps('quantity', 'quantity')}>
           <label htmlFor="quantity">{isEquity ? '수량 (주)' : '수량 (계약)'}</label>
-          <input id="quantity" inputMode="numeric" value={form.quantity} onChange={(e) => set('quantity', e.target.value)} />
+          <input {...inputA11y('quantity')} inputMode="numeric" required value={form.quantity}
+            onChange={(e) => set('quantity', e.target.value)} />
+          <ErrorText id="quantity" />
         </div>
-        <div className="field">
-          <label htmlFor="entry">진입가</label>
-          <input id="entry" inputMode="decimal" value={form.entryPrice} onChange={(e) => set('entryPrice', e.target.value)} />
+        <div {...fieldProps('entryPrice', 'entry_price')}>
+          <label htmlFor="entryPrice">진입가</label>
+          <input {...inputA11y('entryPrice')} inputMode="decimal" required value={form.entryPrice}
+            onChange={(e) => set('entryPrice', e.target.value)} />
+          <ErrorText id="entryPrice" />
         </div>
       </div>
 
-      <div className="field">
-        <label htmlFor="mark">평가가격</label>
-        <input id="mark" inputMode="decimal" value={form.markPrice} onChange={(e) => set('markPrice', e.target.value)} />
+      <div {...fieldProps('markPrice', 'mark_price')}>
+        <label htmlFor="markPrice">평가가격</label>
+        <input {...inputA11y('markPrice')} inputMode="decimal" required value={form.markPrice}
+          className={markFilled ? 'row-settled' : undefined}
+          onChange={(e) => set('markPrice', e.target.value)} />
+        <ErrorText id="markPrice" />
       </div>
 
       <div className="field-pair">
-        <div className="field">
-          <label htmlFor="commission">수수료율 (%)</label>
-          <input id="commission" inputMode="decimal" value={form.commissionPct}
+        <div {...fieldProps('commissionPct', 'commission_rate')}>
+          <label htmlFor="commissionPct">수수료율 (%)</label>
+          <input {...inputA11y('commissionPct')} inputMode="decimal" value={form.commissionPct}
             onChange={(e) => set('commissionPct', e.target.value)} />
+          <ErrorText id="commissionPct" />
         </div>
         {!isEquity && (
-          <div className="field">
-            <label htmlFor="margin">증거금률 (%)</label>
-            <input id="margin" inputMode="decimal" placeholder="선택 입력" value={form.marginPct}
-              onChange={(e) => set('marginPct', e.target.value)} />
+          <div {...fieldProps('marginPct', 'margin_rate')}>
+            <label htmlFor="marginPct">증거금률 (%)</label>
+            <input {...inputA11y('marginPct')} inputMode="decimal" placeholder="선택 입력"
+              value={form.marginPct} onChange={(e) => set('marginPct', e.target.value)} />
+            <ErrorText id="marginPct" />
           </div>
         )}
       </div>
 
-      {errors.length > 0 && (
-        <ul className="form-errors" role="alert">
-          {errors.map((m) => <li key={m}>{m}</li>)}
-        </ul>
-      )}
+      <div className="ticket-live" role="status">
+        {addedName && (
+          <>
+            <CheckCircleIcon size={14} weight="fill" aria-hidden />
+            {addedName} 북에 추가했습니다
+          </>
+        )}
+      </div>
 
       <div className="ticket-actions">
-        <button type="submit" className="btn-primary" disabled={busy}>평가하기</button>
-        <button type="button" className="btn-secondary" disabled={busy} onClick={addToBook}>북에 추가</button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>
+          {busy ? '평가 중' : '평가하기'}
+        </button>
+        <button type="button" className="btn btn-secondary" disabled={busy || (isEquity && !canQuote)}
+          onClick={addToBook}>
+          북에 추가
+        </button>
       </div>
+      {isEquity && !canQuote && (
+        <p className="btn-reason">북에 추가하려면 종목코드 6자리가 필요합니다.</p>
+      )}
     </form>
   )
 }

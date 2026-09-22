@@ -1,47 +1,73 @@
+import { WarningCircleIcon } from '@phosphor-icons/react'
 import { useEffect, useState } from 'react'
 import { api, messagesOf } from './api'
 import BookView from './components/BookView'
 import DealTicket from './components/DealTicket'
+import Home from './components/Home'
+import Nav from './components/Nav'
 import ValuationStatement from './components/ValuationStatement'
+import { useRoute } from './router'
+import { useTheme } from './theme'
+import { useTrace } from './trace'
 import type { PositionCreate, Reference, ValuationRequest, ValuationResponse } from './types'
 
-type Tab = 'valuation' | 'book'
-
 export default function App() {
-  const [tab, setTab] = useState<Tab>('valuation')
+  const [route, go] = useRoute()
+  const { choice, resolved, setChoice } = useTheme()
+
+  return (
+    <div className="shell">
+      <Nav route={route} onNavigate={go} themeChoice={choice} resolved={resolved}
+        onToggleTheme={setChoice} />
+
+      <main>
+        {route === 'home' && <Home onNavigate={go} />}
+        {route === 'valuation' && <ValuationPage />}
+        {route === 'book' && <BookPage onGoToValuation={() => go('valuation')} />}
+      </main>
+
+      <footer className="wrap foot">
+        <a href="https://github.com" target="_blank" rel="noreferrer">저장소</a>
+        <a href="https://github.com" target="_blank" rel="noreferrer">METHODOLOGY</a>
+      </footer>
+    </div>
+  )
+}
+
+function ValuationPage() {
   const [reference, setReference] = useState<Reference | null>(null)
   const [bootError, setBootError] = useState<string[]>([])
   const [result, setResult] = useState<ValuationResponse | null>(null)
   const [busy, setBusy] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
-  const [notice, setNotice] = useState<string | null>(null)
-  const [bookKey, setBookKey] = useState(0)
+  const [added, setAdded] = useState<string | null>(null)
+
+  const trace = useTrace(result?.valuation.trace)
 
   useEffect(() => {
     api.reference().then(setReference).catch((err) => setBootError(messagesOf(err)))
   }, [])
 
-  async function evaluate(req: ValuationRequest) {
-    setBusy(true)
+  async function evaluate(req: ValuationRequest, live: boolean) {
+    // 자동 평가는 버튼을 "평가 중"으로 바꾸지 않는다. 입력 중에 깜빡이면 방해가 된다.
+    if (!live) setBusy(true)
     setErrors([])
-    setNotice(null)
     try {
       setResult(await api.value(req))
     } catch (err) {
-      setErrors(messagesOf(err))
+      if (!live) setErrors(messagesOf(err))
     } finally {
-      setBusy(false)
+      if (!live) setBusy(false)
     }
   }
 
   async function addToBook(req: PositionCreate) {
     setBusy(true)
     setErrors([])
-    setNotice(null)
+    setAdded(null)
     try {
       const p = await api.createPosition(req)
-      setNotice(`${p.name ?? p.symbol} 포지션을 북에 추가했습니다. 북 현황에서 재평가하세요.`)
-      setBookKey((k) => k + 1)
+      setAdded(p.name ?? p.symbol)
     } catch (err) {
       setErrors(messagesOf(err))
     } finally {
@@ -49,41 +75,61 @@ export default function App() {
     }
   }
 
-  return (
-    <div className="app">
-      <header className="masthead">
-        <div className="brand">
-          <h1>PI 데스크 포지션 평가</h1>
-          <p>자기매매 포지션의 시가평가·손익·한도를 근거와 함께 계산합니다</p>
+  if (bootError.length > 0) {
+    return (
+      <div className="wrap page">
+        <ul className="alerts">
+          {bootError.map((m) => (
+            <li className="alert" key={m} role="alert">
+              <WarningCircleIcon size={15} weight="fill" aria-hidden />
+              <span>{m}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
+  if (!reference) {
+    return (
+      <div className="wrap page">
+        <div className="desk">
+          <div className="panel ticket"><span className="skeleton" style={{ height: 320 }} /></div>
+          <div className="panel statement"><span className="skeleton" style={{ height: 320 }} /></div>
         </div>
-        <nav className="tabs" aria-label="화면">
-          <button type="button" aria-current={tab === 'valuation' ? 'page' : undefined}
-            onClick={() => setTab('valuation')}>포지션 평가</button>
-          <button type="button" aria-current={tab === 'book' ? 'page' : undefined}
-            onClick={() => setTab('book')}>북 현황</button>
-        </nav>
-      </header>
+      </div>
+    )
+  }
 
-      <main>
-        {bootError.length > 0 && (
-          <ul className="alerts" role="alert">{bootError.map((m) => <li key={m}>{m}</li>)}</ul>
-        )}
+  return (
+    <div className="wrap page">
+      <h1 className="page-title">포지션 평가</h1>
+      <div className="desk">
+        <div>
+          <DealTicket reference={reference} busy={busy} trace={trace} addedName={added}
+            onEvaluate={evaluate} onAddToBook={addToBook} />
+          {errors.length > 0 && (
+            <ul className="alerts">
+              {errors.map((m) => (
+                <li className="alert" key={m} role="alert">
+                  <WarningCircleIcon size={15} weight="fill" aria-hidden />
+                  <span>{m}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <ValuationStatement result={result} trace={trace} busy={busy} />
+      </div>
+    </div>
+  )
+}
 
-        {tab === 'valuation' && reference && (
-          <div className="desk">
-            <div>
-              <DealTicket reference={reference} busy={busy} onEvaluate={evaluate} onAddToBook={addToBook} />
-              {errors.length > 0 && (
-                <ul className="alerts" role="alert">{errors.map((m) => <li key={m}>{m}</li>)}</ul>
-              )}
-              {notice && <p className="notice" role="status">{notice}</p>}
-            </div>
-            <ValuationStatement result={result} />
-          </div>
-        )}
-
-        {tab === 'book' && <BookView refreshKey={bookKey} />}
-      </main>
+function BookPage({ onGoToValuation }: { onGoToValuation: () => void }) {
+  return (
+    <div className="wrap page">
+      <h1 className="page-title">북 현황</h1>
+      <BookView refreshKey={0} onGoToValuation={onGoToValuation} />
     </div>
   )
 }

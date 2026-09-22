@@ -1,17 +1,26 @@
+import { ListMagnifyingGlassIcon } from '@phosphor-icons/react'
 import {
   RATIO_KEYS, formatRate, formatRatio, formatSignedWon, formatWon, tone,
 } from '../format'
+import { tracedClass } from '../trace'
+import type { TraceApi } from '../trace'
 import type { ValuationResponse } from '../types'
+import AnimatedWon from './AnimatedWon'
 
 interface Props {
   result: ValuationResponse | null
+  trace: TraceApi
+  busy?: boolean
 }
 
-export default function ValuationStatement({ result }: Props) {
+export default function ValuationStatement({ result, trace, busy = false }: Props) {
   if (!result) {
     return (
-      <section className="statement statement-empty" aria-live="polite">
-        <p>전표를 채우고 평가하기를 누르면 손익과 계산 근거가 여기에 나옵니다.</p>
+      <section className="panel statement-empty" aria-live="polite">
+        <ListMagnifyingGlassIcon size={26} weight="light" aria-hidden />
+        <p>
+          전표에 수량과 진입가, 평가가격을 넣으면 순손익과 그 계산 근거가 여기에 나옵니다.
+        </p>
       </section>
     )
   }
@@ -20,19 +29,29 @@ export default function ValuationStatement({ result }: Props) {
   const netTone = tone(v.net_pnl)
 
   return (
-    <section className="statement" aria-live="polite">
+    <section className={`panel statement${busy ? ' is-busy' : ''}`}>
       <div className="headline">
         <span className="headline-label">순손익</span>
-        <span className={`headline-value tone-${netTone}`}>{formatSignedWon(v.net_pnl)}<small>원</small></span>
-        <span className={`headline-sub tone-${netTone}`}>명목 대비 {formatRatio(v.return_on_notional)}</span>
+        <span className={`headline-value tone-${netTone}`}>
+          <AnimatedWon value={v.net_pnl} /><small>원</small>
+        </span>
+        <span className={`headline-sub tone-${netTone}`}>
+          명목 대비 {formatRatio(v.return_on_notional)}
+        </span>
       </div>
 
       <dl className="figures">
         <div><dt>평가 명목금액</dt><dd>{formatWon(v.mark_notional)}</dd></div>
-        <div><dt>평가손익 (비용 전)</dt><dd className={`tone-${tone(v.gross_pnl)}`}>{formatSignedWon(v.gross_pnl)}</dd></div>
+        <div>
+          <dt>평가손익 (비용 전)</dt>
+          <dd className={`tone-${tone(v.gross_pnl)}`}>{formatSignedWon(v.gross_pnl)}</dd>
+        </div>
         <div><dt>거래비용</dt><dd>{formatWon(v.total_costs)}</dd></div>
         {v.initial_margin !== null ? (
-          <div><dt>증거금 대비</dt><dd className={`tone-${netTone}`}>{formatRatio(v.return_on_margin)}</dd></div>
+          <div>
+            <dt>증거금 대비</dt>
+            <dd className={`tone-${netTone}`}>{formatRatio(v.return_on_margin)}</dd>
+          </div>
         ) : (
           <div><dt>거래세</dt><dd>{formatWon(v.transaction_tax)}</dd></div>
         )}
@@ -47,7 +66,18 @@ export default function ValuationStatement({ result }: Props) {
       <table className="ledger" role="table">
         <tbody role="rowgroup">
           {v.trace.map((s) => (
-            <tr key={s.key} role="row" className={s.key === 'net_pnl' ? 'ledger-total' : undefined}>
+            <tr key={s.key} role="row"
+              className={[
+                s.key === 'net_pnl' ? 'ledger-total' : '',
+                'is-traceable',
+                tracedClass(trace.isStepTraced(s.key)).trim(),
+              ].filter(Boolean).join(' ')}
+              tabIndex={0}
+              aria-label={`${s.label}. 이 줄에 쓰인 입력을 전표에서 강조합니다.`}
+              onMouseEnter={() => trace.focusStep(s.key)}
+              onMouseLeave={trace.clear}
+              onFocus={() => trace.focusStep(s.key)}
+              onBlur={trace.clear}>
               <th scope="row" role="rowheader">{s.label}</th>
               <td className="ledger-formula" role="cell">{s.formula}</td>
               <td className="ledger-value" role="cell">
