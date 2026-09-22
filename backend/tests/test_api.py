@@ -115,3 +115,41 @@ def test_valuations_table_is_append_only(tmp_path):
         conn.execute("UPDATE valuations SET net_pnl = 999")
     with pytest.raises(sqlite3.IntegrityError, match="감사추적"):
         conn.execute("DELETE FROM valuations")
+
+
+# ---------- 홈 "오늘의 북"이 쓰는 필드 ----------
+
+def test_summary_exposes_limit_usage_and_last_valued_at(client):
+    """한도 사용률과 마지막 평가 시각은 백엔드가 Decimal로 계산해 내려준다(프론트 계산 금지)."""
+    empty = client.get("/api/book/summary").json()
+    assert {u["code"] for u in empty["limit_usage"]} == {
+        "GROSS_EXPOSURE", "LOSS_LIMIT", "POSITION_NOTIONAL"}
+    assert all(u["ratio"] == "0.000000" for u in empty["limit_usage"])
+    assert empty["last_valued_at"] is None
+
+    client.post("/api/positions", json={
+        "asset_class": "EQUITY", "direction": "LONG", "quantity": 100, "market": "KOSPI",
+        "symbol": "005930", "entry_price": "70000", "commission_rate": "0.00015"})
+    client.post("/api/book/revalue", json={})
+
+    s = client.get("/api/book/summary").json()
+    usage = {u["code"]: u for u in s["limit_usage"]}
+    # 평가 명목 7,500,000, 설정 한도는 config/market_conventions.yaml 값을 그대로 쓴다
+    assert usage["GROSS_EXPOSURE"]["used"] == "7500000"
+    assert usage["POSITION_NOTIONAL"]["used"] == "7500000"
+    assert usage["LOSS_LIMIT"]["used"] == "0"        # 이익이므로 손실 한도는 소진되지 않는다
+    ref = client.get("/api/reference").json()["limits"]
+    assert usage["GROSS_EXPOSURE"]["limit"] == ref["max_gross_exposure"]
+    assert usage["POSITION_NOTIONAL"]["limit"] == ref["max_position_notional"]
+    assert s["last_valued_at"] is not None
+
+
+def test_trace_steps_carry_inputs_over_api(client):
+    """근거 추적용 inputs가 JSON 계약에 포함된다."""
+    body = client.post("/api/valuation/linear", json={
+        "asset_class": "EQUITY", "direction": "LONG", "quantity": 100, "market": "KOSPI",
+        "entry_price": "70000", "mark_price": "75000", "commission_rate": "0.00015"}).json()
+    trace = {s["key"]: s for s in body["valuation"]["trace"]}
+    assert trace["entry_notional"]["inputs"] == ["entry_price", "quantity", "multiplier"]
+    assert trace["transaction_tax"]["inputs"][0] == "mark_price"
+    assert all(s["inputs"] for s in body["valuation"]["trace"])

@@ -22,10 +22,12 @@ from fastapi.responses import JSONResponse, Response
 from app import repository as repo
 from app.conventions import Conventions, ContractSpec, TaxRule, load_conventions
 from app.linear import LinearPosition, value_linear
-from app.portfolio import BookItem, BookSummary, Totals, check_book_limits, summarize_book
+from app.portfolio import (BookItem, BookSummary, Totals, check_book_limits, limit_usage,
+                           summarize_book)
 from app.prices import PriceFetcher, PriceQuote, PriceUnavailable, fetch_latest_close
 from app.schemas import (AppliedConventions, BookResponse, BookSummaryOut, BreachOut, ContractOut,
-                         LatestValuationOut, LimitsOut, PositionCreate, PositionOut, QuoteOut,
+                         LatestValuationOut, LimitsOut, LimitUsageOut, PositionCreate,
+                         PositionOut, QuoteOut,
                          ReconciliationOut, ReferenceOut, RevaluedPosition, RevalueRequest,
                          TaxRuleOut, TotalsOut, TradeTerms, ValuationOut, ValuationRequest,
                          ValuationResponse)
@@ -359,8 +361,11 @@ def book_summary(conn: sqlite3.Connection = Depends(get_db),
                  conv: Conventions = Depends(get_conventions)) -> BookSummaryOut:
     overall, by_class = totals_from_sql(repo.book_by_asset_class(conn))
     breaches = check_book_limits(overall, conv.limits)
+    usage = limit_usage(overall, repo.largest_position_notional(conn), conv.limits)
     return BookSummaryOut(
         totals=TotalsOut.from_engine(overall),
         by_asset_class={k: TotalsOut.from_engine(v) for k, v in by_class.items()},
         breaches=[BreachOut.from_engine(b) for b in breaches],
+        limit_usage=[LimitUsageOut.from_engine(u) for u in usage],
+        last_valued_at=repo.last_valued_at(conn),
     )

@@ -97,3 +97,53 @@ def test_config_tax_rates_2026():
     assert conv.tax_rule("KOSPI").total == D("0.0020")
     assert conv.tax_rule("KOSDAQ").total == D("0.0020")
     assert conv.contract("KOSPI200_FUT").multiplier == D("250000")
+
+
+# ---------- 근거 추적: TraceStep.inputs ----------
+# 화면의 "근거 줄 ↔ 입력 칸 상호 강조"가 이 목록만 보고 동작한다.
+# 프론트가 의존 관계를 추측하지 않도록 엔진이 직접 알려주는 값이므로 계약으로 고정한다.
+
+def _steps(v):
+    return {s.key: s for s in v.trace}
+
+
+def test_trace_inputs_equity_long():
+    v = value_linear(LinearPosition("EQUITY", "LONG", 100, D("70000"), D("75000"),
+                                    commission_rate=D("0.00015"), tax_rule=KOSPI))
+    s = _steps(v)
+    assert s["entry_notional"].inputs == ("entry_price", "quantity", "multiplier")
+    assert s["mark_notional"].inputs == ("mark_price", "quantity", "multiplier")
+    assert s["gross_pnl"].inputs == ("entry_price", "mark_price", "quantity",
+                                     "multiplier", "direction")
+    assert s["commission"].inputs == ("entry_price", "mark_price", "quantity",
+                                      "multiplier", "commission_rate")
+    # 매수는 청산 매도 대금(=평가가)에 거래세가 붙는다
+    assert s["transaction_tax"].inputs == ("mark_price", "quantity", "multiplier",
+                                           "direction", "market", "tax_rate")
+    # 순손익은 앞 단계 입력을 모두 물려받는다 (중복 없이, 등장 순서 유지)
+    assert s["net_pnl"].inputs == ("entry_price", "quantity", "multiplier", "mark_price",
+                                   "direction", "commission_rate", "market", "tax_rate")
+    assert s["return_on_notional"].inputs == s["net_pnl"].inputs
+
+
+def test_trace_inputs_equity_short_uses_entry_price_for_tax():
+    # 공매도는 진입 매도 대금에 거래세 → 의존 입력이 entry_price로 바뀐다
+    v = value_linear(LinearPosition("EQUITY", "SHORT", 50, D("20000"), D("18500"), tax_rule=KOSDAQ))
+    assert _steps(v)["transaction_tax"].inputs == ("entry_price", "quantity", "multiplier",
+                                                   "direction", "market", "tax_rate")
+
+
+def test_trace_inputs_future_with_margin():
+    v = value_linear(LinearPosition("FUTURE", "SHORT", 1, D("350"), D("352"),
+                                    multiplier=D("250000"), margin_rate=D("0.1")))
+    s = _steps(v)
+    assert s["transaction_tax"].inputs == ("asset_class",)
+    assert s["initial_margin"].inputs == ("entry_price", "quantity", "multiplier", "margin_rate")
+    assert "margin_rate" in s["return_on_margin"].inputs
+
+
+def test_every_trace_step_declares_inputs():
+    # 근거 줄이 늘어나면 inputs도 함께 채우도록 강제한다
+    v = value_linear(LinearPosition("EQUITY", "LONG", 100, D("70000"), D("75000"), tax_rule=KOSPI))
+    for step in v.trace:
+        assert step.inputs, f"{step.key}에 inputs가 비어 있다"

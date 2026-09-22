@@ -120,3 +120,27 @@ def insert_valuation(conn: sqlite3.Connection, *, position_id: int, run_id: str,
 
 def book_by_asset_class(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM v_book_by_asset_class ORDER BY asset_class").fetchall()
+
+
+def largest_position_notional(conn: sqlite3.Connection) -> Decimal:
+    """열린 포지션 중 최신 평가 기준 명목금액이 가장 큰 값. 평가 이력이 없으면 0."""
+    row = conn.execute(
+        """
+        SELECT MAX(ABS(lv.signed_exposure)) AS largest
+        FROM v_latest_valuation lv
+        JOIN positions p ON p.id = lv.position_id AND p.status = 'OPEN'
+        """
+    ).fetchone()
+    return Decimal(row["largest"]) if row and row["largest"] is not None else Decimal(0)
+
+
+def last_valued_at(conn: sqlite3.Connection) -> str | None:
+    """열린 포지션에 대한 마지막 평가 시각. 평가 이력이 없으면 None."""
+    row = conn.execute(
+        """
+        SELECT MAX(v.valued_at) AS last_at
+        FROM valuations v
+        JOIN positions p ON p.id = v.position_id AND p.status = 'OPEN'
+        """
+    ).fetchone()
+    return row["last_at"] if row and row["last_at"] else None

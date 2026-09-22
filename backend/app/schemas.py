@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.linear import LinearValuation
-from app.portfolio import LimitBreach, Totals
+from app.portfolio import LimitBreach, LimitUsage, Totals
 from app.prices import normalize_ticker
 
 AssetClass = Literal["EQUITY", "FUTURE"]
@@ -77,6 +77,7 @@ class TraceStepOut(BaseModel):
     label: str
     formula: str
     value: Decimal
+    inputs: list[str]   # 이 값이 의존하는 입력·설정값 (화면의 근거 추적용)
 
 
 class ValuationOut(BaseModel):
@@ -237,8 +238,22 @@ class BookResponse(BaseModel):
     errors: list[str]
 
 
+class LimitUsageOut(BaseModel):
+    code: str
+    label: str
+    used: Decimal
+    limit: Decimal
+    ratio: Decimal
+
+    @classmethod
+    def from_engine(cls, u: LimitUsage) -> LimitUsageOut:
+        return cls(**u.__dict__)
+
+
 class BookSummaryOut(BaseModel):
     """SQL 뷰(v_book_by_asset_class)에서 읽은 마지막 평가 기준 집계."""
     totals: TotalsOut
     by_asset_class: dict[str, TotalsOut]
     breaches: list[BreachOut]
+    limit_usage: list[LimitUsageOut]
+    last_valued_at: str | None
