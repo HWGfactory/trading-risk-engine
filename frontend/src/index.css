@@ -1,0 +1,251 @@
+/*
+  디자인 토큰
+  - 한국 HTS 관행: 매수·이익 빨강, 매도·손실 파랑. 이 두 색은 의미를 전달할 때만 쓴다.
+  - 숫자는 모두 tabular-nums(고정폭 숫자)로 자릿수를 세로 정렬한다.
+  - 계산 근거 표의 합계 줄은 회계 관행대로 이중선으로 구분한다.
+*/
+:root {
+  --paper: #eef1f4;
+  --surface: #ffffff;
+  --ink: #13202d;
+  --ink-muted: #5a6878;
+  --rule: #d3dae1;
+  --rule-strong: #9aa7b4;
+  --gain: #c8232c;
+  --loss: #1a56c7;
+  --warn: #a35c00;
+  --warn-bg: #fff5e6;
+  --focus: #1a56c7;
+  --side: var(--ink);
+
+  --font: 'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-4: 2.5rem;
+
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/*
+  position:absolute인데 좌표가 없으면 정적 위치에 놓인다. 조상 중 positioned 요소가
+  없으면 스크롤 컨테이너(.table-wrap)를 빠져나가 문서 폭을 늘리므로,
+  이 클래스를 쓰는 곳의 스크롤 컨테이너에는 반드시 position:relative를 준다.
+*/
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+  margin: -1px; padding: 0; border: 0;
+}
+
+/* ---------- 셸 ---------- */
+/* 노치 단말 가로 모드에서 본문이 잘리지 않도록 좌우 안전 영역을 존중한다. */
+.app {
+  max-width: 1240px; margin: 0 auto;
+  padding: 0 max(24px, env(safe-area-inset-right)) 64px max(24px, env(safe-area-inset-left));
+}
+
+.masthead {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+  padding: 28px 0 0; border-bottom: 1px solid var(--rule); margin-bottom: 28px;
+}
+.brand h1 { font-size: var(--step-1); font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+.brand p { margin: 2px 0 14px; color: var(--ink-muted); font-size: var(--step--1); }
+
+.tabs { display: flex; gap: 4px; }
+.tabs button {
+  border: 0; background: none; padding: 10px 14px; cursor: pointer;
+  color: var(--ink-muted); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs button[aria-current='page'] { color: var(--ink); border-bottom-color: var(--ink); }
+
+.desk { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 28px; align-items: start; }
+
+/* ---------- 버튼 ---------- */
+.btn-primary, .btn-secondary {
+  border-radius: 4px; padding: 10px 16px; font-weight: 600; cursor: pointer;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.btn-primary { background: var(--side); color: #fff; }
+.btn-secondary { background: var(--surface); border-color: var(--rule-strong); }
+.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-text {
+  border: 0; background: none; color: var(--ink-muted); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px; font-size: var(--step--1); padding: 4px;
+}
+
+/* ---------- 매매 전표 ---------- */
+.ticket {
+  background: var(--surface); border: 1px solid var(--rule); border-top: 4px solid var(--side);
+  border-radius: 6px; padding: 18px 18px 20px; display: grid; gap: 14px;
+}
+.ticket.is-buy { --side: var(--gain); }
+.ticket.is-sell { --side: var(--loss); }
+
+.segmented { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+.seg { border: 0; background: var(--surface); padding: 9px 0; cursor: pointer; font-weight: 600; color: var(--ink-muted); }
+.seg + .seg { border-left: 1px solid var(--rule); }
+.seg-buy[aria-checked='true'] { background: var(--gain); color: #fff; }
+.seg-sell[aria-checked='true'] { background: var(--loss); color: #fff; }
+.segmented-quiet .seg[aria-checked='true'] { background: var(--ink); color: #fff; }
+
+.field { display: grid; gap: 5px; min-width: 0; }
+.field label { font-size: var(--step--1); color: var(--ink-muted); font-weight: 500; }
+.field input, .field select {
+  width: 100%; border: 1px solid var(--rule-strong); border-radius: 4px; padding: 9px 10px;
+  background: var(--surface); text-align: left;
+}
+.field-row { display: flex; gap: 8px; }
+.field-row input { flex: 1; }
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hint { margin: 0; font-size: var(--step--1); color: var(--ink-muted); }
+.hint-warn { color: var(--warn); }
+
+.ticket-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 4px; }
+
+.form-errors, .alerts { margin: 0; padding: 10px 12px 10px 28px; border-radius: 4px; font-size: var(--step--1); }
+.form-errors { background: #fdeeee; color: #8a1a20; }
+.alerts { background: #fdeeee; color: #8a1a20; margin-top: 12px; }
+.alerts-limit { background: var(--warn-bg); color: var(--warn); }
+.notice { margin: 12px 0 0; font-size: var(--step--1); color: var(--ink-muted); }
+
+/* ---------- 평가 명세 ---------- */
+.statement { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 24px 28px 22px; }
+.statement-empty { color: var(--ink-muted); display: grid; place-items: center; min-height: 360px; text-align: center; }
+
+.headline { display: grid; gap: 2px; padding-bottom: 18px; border-bottom: 1px solid var(--rule); }
+.headline-label { font-size: var(--step--1); color: var(--ink-muted); }
+.headline-value { font-size: var(--step-4); font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.headline-value small { font-size: var(--step-1); font-weight: 500; margin-left: 4px; }
+.headline-sub { font-weight: 600; }
+
+/* 라벨이 2줄로 접히는 칸이 생겨도 네 숫자의 기준선이 어긋나지 않도록 행을 공유한다. */
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto auto; margin: 0; border-bottom: 1px solid var(--rule); }
+.figures > div { padding: 14px 12px 14px 0; grid-row: span 2; grid-template-rows: subgrid; display: grid; align-content: start; gap: 2px; }
+.figures > div + div { padding-left: 14px; border-left: 1px solid var(--rule); }
+.figures dt { font-size: var(--step--1); color: var(--ink-muted); }
+.figures dd { margin: 0; font-size: var(--step-1); font-weight: 600; align-self: end; }
+
+.ledger-title { font-size: var(--step-0); font-weight: 700; margin: 22px 0 6px; }
+.ledger { width: 100%; border-collapse: collapse; }
+.ledger th, .ledger td { padding: 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; text-align: left; }
+.ledger th { font-weight: 600; width: 11rem; padding-right: 12px; font-size: var(--step-0); }
+/*
+  `.ledger td`(0,1,1)가 `.ledger-formula`(0,1,0)를 이기므로 클래스만으로는 padding이
+  적용되지 않는다. 산식과 금액이 맞붙던 원인이라 요소+클래스로 특이도를 맞춘다.
+*/
+.ledger td.ledger-formula { color: var(--ink-muted); font-size: var(--step--1); padding-right: 24px; }
+.ledger td.ledger-value { text-align: right; font-weight: 600; white-space: nowrap; width: 1%; }
+.ledger tr:has(+ .ledger-total) > * { border-bottom: 0; }
+.ledger-total th, .ledger-total td { border-top: 3px double var(--ink); font-weight: 700; }
+.ledger-total td.ledger-formula { font-weight: 400; }
+
+.basis { margin-top: 16px; font-size: var(--step--1); color: var(--ink-muted); }
+.basis p { margin: 2px 0; }
+
+.tone-gain { color: var(--gain); }
+.tone-loss { color: var(--loss); }
+.tone-flat { color: var(--ink); }
+.tone-warn { color: var(--warn); }
+
+/* ---------- 북 현황 ---------- */
+/* minmax(0, 1fr): 표의 min-content가 열 폭을 밀어올려 형제 전체를 넘치게 하는 것을 막는다. */
+.book { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.book-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.book-note { margin: 0; color: var(--ink-muted); font-size: var(--step--1); max-width: 60ch; }
+
+.strip {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto auto; margin: 0;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
+}
+.strip > div { padding: 14px 18px; grid-row: span 2; grid-template-rows: subgrid; display: grid; align-content: start; gap: 2px; }
+.strip > div + div { border-left: 1px solid var(--rule); }
+.strip dt { font-size: var(--step--1); color: var(--ink-muted); }
+.strip dd { margin: 0; font-size: var(--step-1); font-weight: 700; align-self: end; }
+
+/* position:relative — 표 안의 .sr-only를 이 컨테이너 안에 가둔다(문서 가로 넘침 방지). */
+.table-wrap { position: relative; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.grid { width: 100%; border-collapse: collapse; font-size: var(--step-0); }
+.grid th, .grid td { padding: 10px 14px; border-bottom: 1px solid var(--rule); text-align: left; white-space: nowrap; }
+.grid thead th { font-size: var(--step--1); color: var(--ink-muted); font-weight: 500; }
+.grid tbody tr:last-child td { border-bottom: 0; }
+.grid .num { text-align: right; }
+/* 표가 가로로 스크롤돼도 설명은 왼쪽에 붙어 계속 읽히게 한다. */
+.grid caption { text-align: left; font-size: var(--step--1); color: var(--ink-muted); padding: 10px 14px 8px; position: sticky; left: 0; }
+.grid-compact { background: var(--surface); }
+.cell-main { display: block; font-weight: 600; }
+.cell-sub { display: block; font-size: var(--step--1); color: var(--ink-muted); }
+.cell-basis { font-size: var(--step--1); color: var(--ink-muted); }
+.cell-basis.is-stale { color: var(--warn); }
+.mark-input { width: 7.5rem; text-align: right; border: 1px solid var(--rule-strong); border-radius: 4px; padding: 6px 8px; }
+.empty { color: var(--ink-muted); padding: 40px 0; text-align: center; }
+
+/* ---------- 반응형 ---------- */
+/*
+  데스크톱 전용 도구지만 좁은 화면에서도 깨지지 않고, 어떤 숫자도 근거 없이 남지 않아야 한다.
+  1100px에서 2단을 푸는 이유: 그 아래에서는 평가 명세의 산식 열과 금액 열이 서로 밀어낸다.
+*/
+@media (max-width: 1100px) {
+  .desk { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .figures, .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .figures > div:nth-child(3), .strip > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  .strip > div:nth-child(3) { padding-left: 18px; }
+  .ledger th { width: 8rem; }
+}
+@media (max-width: 560px) {
+  .app { padding: 0 max(14px, env(safe-area-inset-right)) 48px max(14px, env(safe-area-inset-left)); }
+  .masthead { flex-direction: column; align-items: flex-start; }
+  .headline-value { font-size: 2rem; }
+  .statement { padding: 18px 16px 16px; }
+  .book-bar { flex-direction: column; align-items: stretch; }
+  .grid th, .grid td { padding: 9px 10px; }
+  .grid caption { padding: 9px 10px 7px; }
+
+  /*
+    산식은 이 제품의 존재 이유라 좁은 화면에서도 숨기지 않는다.
+    행을 [라벨 | 금액] + [산식 전폭] 2줄 격자로 다시 쌓는다.
+    display를 바꾸면 표 의미가 사라지므로 JSX에서 role을 명시해 보완한다.
+  */
+  .ledger, .ledger tbody { display: block; }
+  .ledger tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px;
+    padding: 11px 0; border-bottom: 1px solid var(--rule);
+  }
+  .ledger th, .ledger td { display: block; padding: 0; border-bottom: 0; width: auto; }
+  .ledger th { grid-column: 1; grid-row: 1; }
+  .ledger td.ledger-value { grid-column: 2; grid-row: 1; }
+  .ledger td.ledger-formula { grid-column: 1 / -1; grid-row: 2; padding-right: 0; text-wrap: pretty; }
+  .ledger tr:has(+ .ledger-total) { border-bottom: 0; }
+  .ledger-total { border-top: 3px double var(--ink); }
+  .ledger-total th, .ledger-total td { border-top: 0; }
+}
+
+/*
+  손가락 입력에서만 타깃을 키운다. 화면 폭이 아니라 입력 장치를 기준으로 하므로
+  터치스크린 노트북도 함께 처리되고, 마우스를 쓰는 데스크의 조밀한 밀도는 그대로 남는다.
+*/
+@media (pointer: coarse) {
+  .tabs button { padding: 13px 14px; }
+  .seg { padding: 12px 0; }
+  .field input, .field select { padding: 12px 10px; }
+  .btn-primary, .btn-secondary { padding: 12px 16px; }
+  .mark-input { padding: 10px 8px; }
+  .btn-text { padding: 13px 10px; margin: -9px -6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

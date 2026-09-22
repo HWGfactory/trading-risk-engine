@@ -1,0 +1,47 @@
+# 시장 관행·세율·계약명세·리스크 한도
+# - 코드에 숫자를 하드코딩하지 않고 이 파일 한 곳에서만 관리한다.
+# - 값이 바뀌면 이 파일을 고치고 verified_as_of 와 source 를 갱신한다.
+# - 소수는 부동소수점 오차를 피하려고 문자열로 적는다.
+
+verified_as_of: "2026-09-22"
+
+transaction_tax:
+  source: "증권거래세법 시행령 개정(2025년 세제개편안), 2026-01-01 이후 양도분부터 적용"
+  note: "매도 양도가액에 부과. 파생상품(선물·옵션)은 증권거래세 대상이 아니다."
+  markets:
+    KOSPI:
+      securities_tax: "0.0005"     # 증권거래세 0.05%
+      rural_special_tax: "0.0015"  # 농어촌특별세 0.15%  → 합계 0.20%
+    KOSDAQ:
+      securities_tax: "0.0020"     # 증권거래세 0.20%
+      rural_special_tax: "0"       # 농특세 없음        → 합계 0.20%
+
+# 기본 수수료율 0.015%. 증권사·채널마다 다르며, 자기매매(PI)는 위탁수수료 대신
+# 거래소·예탁원 등 유관기관 비용만 발생하므로 화면에서 직접 조정한다.
+default_commission_rate: "0.00015"
+
+contracts:
+  source: "KRX 파생상품 상품명세(거래승수·호가단위). 사용 전 KRX 홈페이지에서 재확인할 것"
+  items:
+    KOSPI200_FUT:
+      name: "코스피200 선물"
+      multiplier: "250000"   # 지수 1포인트 = 25만원
+      tick_size: "0.05"
+    MINI_KOSPI200_FUT:
+      name: "미니 코스피200 선물"
+      multiplier: "50000"
+      tick_size: "0.02"
+    KOSDAQ150_FUT:
+      name: "코스닥150 선물"
+      multiplier: "10000"
+      tick_size: "0.1"
+    STOCK_FUT:
+      name: "주식선물"
+      multiplier: "10"       # 1계약 = 기초주식 10주
+      tick_size: "0"         # 기초주식 가격대별 호가단위를 따름 (여기선 검증 생략)
+
+# 리스크 한도 — 회사별 내부 기준이므로 아래는 데모용 예시값이다.
+risk_limits:
+  max_position_notional: "5000000000"   # 단일 포지션 명목금액 50억
+  max_gross_exposure: "30000000000"     # 북 총노출 300억
+  max_loss: "500000000"                 # 북 평가손실 5억
