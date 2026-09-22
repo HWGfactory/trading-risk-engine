@@ -11,6 +11,8 @@ import { useTheme } from './theme'
 import { useTrace } from './trace'
 import type { PositionCreate, Reference, ValuationRequest, ValuationResponse } from './types'
 
+const REPO = 'https://github.com/HWGfactory/trading-risk-engine'
+
 export default function App() {
   const [route, go] = useRoute()
   const { choice, resolved, setChoice } = useTheme()
@@ -27,8 +29,10 @@ export default function App() {
       </main>
 
       <footer className="wrap foot">
-        <a href="https://github.com" target="_blank" rel="noreferrer">저장소</a>
-        <a href="https://github.com" target="_blank" rel="noreferrer">METHODOLOGY</a>
+        <a href={`${REPO}#readme`} target="_blank" rel="noreferrer">저장소</a>
+        <a href={`${REPO}/blob/main/METHODOLOGY.md`} target="_blank" rel="noreferrer">
+          계산 방법론
+        </a>
       </footer>
     </div>
   )

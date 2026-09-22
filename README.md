@@ -87,5 +87,8 @@ cd backend
 색·글꼴·간격·모션의 결정과 근거는 [DESIGN.md](DESIGN.md)에 있습니다.
 라이트·다크 팔레트의 대비는 42개 조합을 계산해 전부 WCAG AA를 통과시켰습니다.
 
+## 저장소
+https://github.com/HWGfactory/trading-risk-engine
+
 ## 로드맵
 옵션(블랙-숄즈·그릭스), 채권(듀레이션·DV01), 북 VaR, Claude API 리스크 코멘트, MCP 서버화
