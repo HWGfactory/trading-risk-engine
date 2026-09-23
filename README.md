@@ -3,7 +3,7 @@
 증권사 자기매매(PI) 데스크의 포지션을 넣으면 손익과 거래비용, 리스크 한도 사용률을 계산하고
 **모든 숫자 옆에 그 숫자가 나온 산식과 대입값을 함께 보여주는** 웹 도구입니다.
 
-**데모:** https://frontend-wongihong.vercel.app
+**데모:** https://trading-risk-engine-chi.vercel.app 
 (무료 서버라 한동안 접속이 없었다면 깨어나는 데 최대 1분 걸립니다)
 
 ![홈 화면](docs/screenshots/home-desktop-light.png)
