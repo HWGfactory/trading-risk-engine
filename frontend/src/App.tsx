@@ -10,6 +10,7 @@ import { useRoute } from './router'
 import { useTheme } from './theme'
 import { useTrace } from './trace'
 import PositionDetail from './components/PositionDetail'
+import WakeGate from './components/WakeGate'
 import type { Position, Reference, TradeCreate, ValuationRequest, ValuationResponse } from './types'
 
 const REPO = 'https://github.com/HWGfactory/trading-risk-engine'
@@ -24,9 +25,13 @@ export default function App() {
         onToggleTheme={setChoice} />
 
       <main>
-        {route === 'home' && <Home onNavigate={go} />}
-        {route === 'valuation' && <ValuationPage />}
-        {route === 'book' && <BookPage onGoToValuation={() => go('valuation')} />}
+        {/* 백엔드가 응답할 때까지 붙잡아 둔다. 로컬에서는 즉시 통과한다. */}
+        <WakeGate>
+          <DemoBanner />
+          {route === 'home' && <Home onNavigate={go} />}
+          {route === 'valuation' && <ValuationPage />}
+          {route === 'book' && <BookPage onGoToValuation={() => go('valuation')} />}
+        </WakeGate>
       </main>
 
       <footer className="wrap foot">
@@ -38,6 +43,27 @@ export default function App() {
     </div>
   )
 }
+
+/** 데모 환경이면 안내를 띄운다. 켜짐 여부는 백엔드가 알려준다. */
+function DemoBanner() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    api.reference()
+      .then((r) => { if (!cancelled) setShow(Boolean(r.demo_mode)) })
+      .catch(() => { /* 안내를 못 띄워도 화면은 그대로 쓴다 */ })
+    return () => { cancelled = true }
+  }, [])
+  if (!show) return null
+  return (
+    <div className="wrap">
+      <p className="demo-banner" role="status">
+        데모 환경입니다. 데이터는 주기적으로 초기화됩니다.
+      </p>
+    </div>
+  )
+}
+
 
 function ValuationPage() {
   const [reference, setReference] = useState<Reference | null>(null)

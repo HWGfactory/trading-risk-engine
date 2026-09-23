@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import uuid
@@ -20,7 +21,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from app import repository as repo
+from app import demo_seed, repository as repo
+from app import settings
 from app.conventions import Conventions, ContractSpec, TaxRule, load_conventions
 from app.linear import LinearPosition, value_linear
 from app.trades import Fill, InstrumentSpec as TradeSpec, PositionState, TradeResult, apply_trade
@@ -35,6 +37,8 @@ from app.schemas import (AppliedConventions, BookResponse, BookSummaryOut, Breac
                          TradePreview, TradeResponse, TradeTerms, ValuationOut,
                          ValuationRequest, ValuationResponse)
 
+log = logging.getLogger("uvicorn.error")
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -48,6 +52,17 @@ async def lifespan(_: FastAPI):
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = repo.connect(path)
     repo.init_db(conn)
+
+    # Render 무료 플랜은 재시작마다 디스크가 비므로, 비어 있으면 예시 북을 만들어 둔다.
+    if settings.auto_seed() and demo_seed.is_empty(conn):
+        try:
+            made = demo_seed.seed(conn)
+            log.info("예시 북을 만들었습니다. 체결 %d건.", made)
+            demo_seed.revalue_in_background(str(path))
+        except Exception as exc:  # noqa: BLE001
+            # 시드가 실패해도 앱은 떠야 한다. 빈 화면이 되지만 사용은 가능하다.
+            log.warning("예시 북 생성을 건너뜁니다: %s", exc)
+
     conn.close()
     yield
 
@@ -55,7 +70,8 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="PI 데스크 포지션 평가 엔진", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # 배포에서는 ALLOWED_ORIGINS로 덮어쓴다. 기본값은 로컬 개발 주소다.
+    allow_origins=settings.allowed_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -279,6 +295,7 @@ def reference(conv: Conventions = Depends(get_conventions)) -> ReferenceOut:
         tax_source=conv.tax_source,
         contract_source=conv.contract_source,
         limits=LimitsOut(**conv.limits.__dict__),
+        demo_mode=settings.demo_mode(),
     )
 
 
@@ -345,10 +362,13 @@ def _apply_fill(conn: sqlite3.Connection, req: TradeCreate, conv: Conventions,
     return pos_row, result, tspec, instrument_id
 
 
-@app.post("/api/trades", response_model=TradeResponse, status_code=201)
-def create_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
-                 conv: Conventions = Depends(get_conventions)) -> TradeResponse:
-    """체결 입력. instrument upsert, 포지션 증분 갱신, 체결 저장을 한 트랜잭션으로 처리한다."""
+def book_trade(conn: sqlite3.Connection, req: TradeCreate,
+               conv: Conventions) -> tuple[int, int, TradeResult]:
+    """체결 한 건을 저장한다. 한 트랜잭션으로 묶는다.
+
+    라우트와 시작 시 시드가 같은 경로를 쓰도록 분리했다.
+    요청 객체가 TradeCreate라 호가단위·필수값 검증이 여기서도 그대로 적용된다.
+    """
     try:
         pos_row, result, _, instrument_id = _apply_fill(conn, req, conv, persist=True)
         repo.update_position(
@@ -366,6 +386,37 @@ def create_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
     except Exception:
         conn.rollback()
         raise
+    return trade_id, instrument_id, result
+
+
+def check_demo_limits(conn: sqlite3.Connection, req: TradeCreate) -> None:
+    """데모 환경에서 포지션이 무한정 쌓이지 않도록 막는다.
+
+    이미 들고 있는 종목에 체결을 더하는 것은 막지 않는다. 새 종목만 상한에 걸린다.
+    """
+    if not settings.demo_mode():
+        return
+    limit = settings.max_positions()
+    open_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM positions WHERE status = 'OPEN'").fetchone()["c"]
+    if int(open_count) < limit:
+        return
+    known = conn.execute(
+        "SELECT 1 FROM instruments WHERE symbol = ? AND asset_class = ?",
+        (req.symbol, req.asset_class)).fetchone()
+    if known:
+        return
+    raise HTTPException(status_code=409, detail=[
+        f"데모 환경에서는 포지션을 {limit}건까지만 만들 수 있습니다. "
+        "이미 있는 종목에 체결을 더하거나, 쓰지 않는 포지션을 청산하세요."])
+
+
+@app.post("/api/trades", response_model=TradeResponse, status_code=201)
+def create_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
+                 conv: Conventions = Depends(get_conventions)) -> TradeResponse:
+    """체결 입력. instrument upsert, 포지션 증분 갱신, 체결 저장을 한 트랜잭션으로 처리한다."""
+    check_demo_limits(conn, req)
+    trade_id, instrument_id, result = book_trade(conn, req, conv)
 
     trade_row = conn.execute(
         """SELECT t.*, i.symbol, i.name, i.asset_class

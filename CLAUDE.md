@@ -46,6 +46,8 @@ backend/
   app/
     main.py         FastAPI 라우트, 의존성, 오류 응답(한국어), 엔진·SQL 대사
     schemas.py      요청·응답 스키마 (Decimal은 JSON 문자열)
+    settings.py     배포 환경변수 (CORS, PORT, DEMO_MODE, AUTO_SEED)
+    demo_seed.py    시작 시 DB가 비어 있으면 예시 북 생성
     conventions.py  YAML 로더 (UTF-8 고정)
     linear.py       주식·선물 평가 엔진 (순수 함수, I/O 없음)
     trades.py       체결 기반 포지션 엔진 (이동평균법, 순수 함수)
@@ -86,6 +88,9 @@ frontend/
       BookView.tsx            북 현황·재평가·대사·손익 추이
       PositionDetail.tsx      종목별 체결 이력과 평균단가 변화
       AnimatedWon.tsx         숫자 전환 (마지막 프레임은 백엔드 문자열 그대로)
+      WakeGate.tsx            잠든 백엔드가 깨어날 때까지 안내 + 재시도
+render.yaml         백엔드 배포 설정 (Render)
+frontend/.env.example  프론트 환경변수 설명
 DESIGN.md           색·글꼴·간격·모션의 결정과 근거
 METHODOLOGY.md      산식과 근거, 손계산 예시 (테스트 기대값의 출처)
 docs/screenshots/   문서용 스크린샷 (3화면 x 1280/375 x 라이트/다크 + 상태 5종)
@@ -136,6 +141,9 @@ daily_snapshots 일별 스냅샷. append-only. 같은 날 다시 찍으면 정�
     평균단가는 소수 4자리 반올림, 실현손익은 원 단위다.
 16. 날짜가 필요한 곳은 Asia/Seoul 기준으로 파이썬에서 계산한다.
     SQLite의 datetime('now')는 UTC라서 한국 저녁에 찍으면 전날로 기록된다.
+17. 배포 환경에서 달라지는 값은 app/settings.py에만 둔다. 환경변수를 코드 곳곳에서 읽지 않는다.
+    환경변수를 하나도 주지 않으면 로컬 개발 설정으로 동작해야 한다.
+18. API 주소는 frontend/src/api.ts 한 곳에서만 다룬다. 컴포넌트는 주소를 알 필요가 없다.
 
 ## 알아둘 제약
 - pykrx는 import 시 "KRX 로그인 실패" 안내를 출력하지만 오류가 아니다. 수정주가 조회는 로그인 없이 된다.

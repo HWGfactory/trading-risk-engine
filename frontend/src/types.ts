@@ -108,6 +108,8 @@ export interface Reference {
   tax_source: string
   contract_source: string
   limits: { max_position_notional: Dec; max_gross_exposure: Dec; max_loss: Dec }
+  /** 데모 환경이면 화면 상단에 안내를 띄운다. 백엔드의 DEMO_MODE가 정한다. */
+  demo_mode: boolean
 }
 
 export interface LatestValuation {

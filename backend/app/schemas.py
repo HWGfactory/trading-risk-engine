@@ -171,6 +171,8 @@ class ReferenceOut(BaseModel):
     tax_source: str
     contract_source: str
     limits: LimitsOut
+    # 데모 환경이면 화면 상단에 안내를 띄운다.
+    demo_mode: bool = False
 
 
 class LatestValuationOut(BaseModel):
