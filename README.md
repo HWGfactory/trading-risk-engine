@@ -3,16 +3,20 @@
 증권사 자기매매(PI) 데스크의 포지션을 넣으면 손익과 거래비용을 계산하고
 **모든 숫자 옆에 그 숫자가 나온 산식과 대입값을 함께 보여주는** 웹 도구입니다.
 
-**데모:** https://frontend-wongihong.vercel.app
+**데모:** https://trading-risk-engine-chi.vercel.app
 (무료 서버라 한동안 접속이 없었다면 깨어나는 데 최대 1분 걸립니다)
 
 ![홈 화면](docs/screenshots/home-desktop-light.png)
+
+</br>
 
 ## 왜 만들었나
 
 평가 도구가 내놓는 숫자는 "왜 이 값인가"에 답할 수 있어야 믿을 수 있습니다.
 이 도구는 예측이나 추천을 하지 않습니다. 주어진 포지션을 정해진 규칙대로 평가하고,
 그 과정을 누구나 따라가며 검산할 수 있게 보여주는 데 집중했습니다.
+
+</br>
 
 ## 기능
 
@@ -81,12 +85,16 @@ Python 엔진의 집계(`summarize_book`)와 SQL 뷰의 집계(`v_book_by_asset_
 [METHODOLOGY.md](METHODOLOGY.md)에 산식과 손계산 예시를 적고, pytest는 그 손계산 결과를 기대값으로 그대로 씁니다.
 엔진, 체결, 북 집계, API 통합, 시세 폴백까지 70여 개 테스트가 있습니다.
 
+</br>
+
 ## 기술 스택
 
 - **백엔드:** Python 3.11, FastAPI, Pydantic v2, sqlite3 (ORM 없음)
 - **시세:** pykrx, FinanceDataReader
 - **프론트:** React 19, TypeScript, Vite, motion
 - **배포:** Vercel(프론트), Render(백엔드)
+
+</br>
 
 ## 직접 실행하기 (Windows)
 
@@ -97,6 +105,8 @@ npm install
 npm run setup   # 최초 1회: 가상환경, 의존성, 예시 데이터
 npm run dev     # http://localhost:5173
 ```
+
+</br>
 
 ## 더 보기
 
