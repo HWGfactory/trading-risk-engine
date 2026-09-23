@@ -14,11 +14,19 @@ from scripts.shoot_screenshots import CHROME, OUT, shoot_url
 
 STATES: list[tuple[str, str, int, int, str]] = [
     # (파일명, shot.html 쿼리, 폭, 높이, 설명)
-    ("state-book-empty", "route=/book&act=empty", 1280, 700, "빈 북"),
-    ("state-loading-skeleton", "route=/book&act=loading", 1280, 620, "로딩 스켈레톤"),
     ("state-input-error", "route=/valuation&act=error", 1280, 900, "입력 오류"),
-    ("state-trace-highlight", "route=/valuation&act=trace", 1280, 900, "근거 추적 강조"),
+    ("state-trace-highlight", "route=/valuation&act=trace", 1280, 780, "근거 추적 강조"),
+    ("state-trade-preview", "route=/valuation&act=preview", 1280, 980, "평균단가 미리보기"),
+    ("state-trade-flip", "route=/valuation&act=flip", 1280, 980, "방향 전환 안내"),
+    ("state-position-detail", "route=/book&act=detail", 1280, 720, "종목 상세"),
     ("state-reconciliation", "route=/book&act=recon&theme=dark", 1280, 620, "대사 일치"),
+]
+
+# 빈 북과 로딩은 비어 있는 임시 DB를 띄운 백엔드를 상대로 따로 찍는다.
+# 화면에서 응답을 가로채 흉내 내지 않기 위한 것이다. README의 EMPTY_STATES 절 참조.
+EMPTY_STATES: list[tuple[str, str, int, int, str]] = [
+    ("state-book-empty", "route=/book&act=empty", 1280, 620, "빈 북"),
+    ("state-loading-skeleton", "route=/book&act=loading", 1280, 560, "로딩 스켈레톤"),
 ]
 
 

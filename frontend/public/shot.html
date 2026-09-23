@@ -74,6 +74,20 @@
       const tax = rows.find((r) => r.textContent.includes('거래세')) || rows[0]
       tax.focus()
       await sleep(600)
+    } else if (act === 'filled') {
+      // 평가 화면은 값이 채워진 상태로 찍는다. 빈 전표는 이 제품이 무엇을 하는지 보여주지 못한다.
+      await sleep(1400)
+      const set = (id, v) => {
+        const el = d.getElementById(id)
+        Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, 'value').set.call(el, v)
+        el.dispatchEvent(new win.Event('input', { bubbles: true }))
+      }
+      set('ticker', '005930')
+      set('name', '삼성전자')
+      set('quantity', '100')
+      set('entryPrice', '250000')
+      set('markPrice', '277500')
+      await sleep(2000)
     } else if (act === 'flip' || act === 'preview') {
       // 이미 보유 중인 삼성전자에 반대 방향 체결을 넣어 미리보기를 띄운다.
       // flip이면 보유 400주를 넘는 500주를 팔아 방향 전환 안내가 뜨게 한다.

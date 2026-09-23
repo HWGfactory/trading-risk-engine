@@ -35,18 +35,24 @@ MIN_VIEWPORT = 500
 DESKTOP = (1280, 900)
 MOBILE = (375, 812)
 
-SHOTS: list[tuple[str, str, int, int, str]] = []
+# act는 화면을 어떤 상태까지 몰고 갈지 정한다(frontend/public/shot.html 참조).
+# 평가 화면은 값이 채워진 상태로 찍는다. 빈 전표는 이 제품이 무엇을 하는지 보여주지 못한다.
+SHOTS: list[tuple[str, str, int, int, str, str]] = []
 for theme in ("light", "dark"):
-    for name, route, tall in (("home", "/", 1760), ("valuation", "/valuation", 1000),
-                              ("book", "/book", 900)):
-        SHOTS.append((f"{name}-desktop-{theme}", route, DESKTOP[0], tall, theme))
-        SHOTS.append((f"{name}-mobile-{theme}", route, MOBILE[0], 1500 if name == "home" else 900,
-                      theme))
+    for name, route, tall, act in (("home", "/", 1760, ""),
+                                   ("valuation", "/valuation", 1080, "filled"),
+                                   ("book", "/book", 900, "")):
+        SHOTS.append((f"{name}-desktop-{theme}", route, DESKTOP[0], tall, theme, act))
+        mobile_h = {"home": 1500, "valuation": 1500}.get(name, 900)
+        SHOTS.append((f"{name}-mobile-{theme}", route, MOBILE[0], mobile_h, theme, act))
 
 
-def shoot(dest: Path, route: str, w: int, h: int, theme: str) -> bool:
+def shoot(dest: Path, route: str, w: int, h: int, theme: str, act: str = "") -> bool:
     """shot.html을 띄워 잡고, iframe 영역(w x h)만 잘라 저장한다."""
-    return shoot_url(dest, f"w={w}&h={h}&theme={theme}&route={route}", w, h)
+    query = f"w={w}&h={h}&theme={theme}&route={route}"
+    if act:
+        query += f"&act={act}"
+    return shoot_url(dest, query, w, h)
 
 
 def shoot_url(dest: Path, query: str, w: int, h: int) -> bool:
@@ -74,12 +80,13 @@ def main() -> int:
         print("CHROME_PATH 환경 변수로 경로를 지정하세요.")
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
-    for old in OUT.glob("*.png"):
-        old.unlink()
+    # 이 스크립트가 다시 만들 파일만 지운다. shoot_states.py가 찍은 상태 스크린샷은 건드리지 않는다.
+    for name, *_ in SHOTS:
+        (OUT / f"{name}.png").unlink(missing_ok=True)
 
     made = 0
-    for name, route, w, h, theme in SHOTS:
-        ok = shoot(OUT / f"{name}.png", route, w, h, theme)
+    for name, route, w, h, theme, act in SHOTS:
+        ok = shoot(OUT / f"{name}.png", route, w, h, theme, act)
         print(f"{'[찍음]' if ok else '[실패]'} {name:30} {w}x{h} {theme}")
         made += int(ok)
 
