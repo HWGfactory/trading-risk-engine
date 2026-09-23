@@ -2,12 +2,12 @@ import { CheckCircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { api, messagesOf } from '../api'
-import { formatPrice, isNumeric, percentToRate, rateToPercent } from '../format'
+import { formatPrice, formatSignedWon, isNumeric, percentToRate, rateToPercent, tone } from '../format'
 import { tracedClass } from '../trace'
 import type { TraceApi } from '../trace'
 import type {
-  AssetClass, Direction, Market, PositionCreate, Quote, Reference, TraceInput, TradeTerms,
-  ValuationRequest,
+  AssetClass, Direction, Market, Quote, Reference, TraceInput, TradeCreate, TradePreview,
+  TradeTerms, ValuationRequest,
 } from '../types'
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
   trace: TraceApi
   addedName: string | null
   onEvaluate: (req: ValuationRequest, live: boolean) => void
-  onAddToBook: (req: PositionCreate) => void
+  onBookTrade: (req: TradeCreate) => void
 }
 
 interface TicketForm {
@@ -52,7 +52,7 @@ function useRadioGroup<T extends string>(values: readonly T[], current: T, set: 
 }
 
 export default function DealTicket({
-  reference, busy, trace, addedName, onEvaluate, onAddToBook,
+  reference, busy, trace, addedName, onEvaluate, onBookTrade,
 }: Props) {
   const [form, setForm] = useState<TicketForm>(() => ({
     assetClass: 'EQUITY',
@@ -73,6 +73,7 @@ export default function DealTicket({
   const [quoteError, setQuoteError] = useState<string[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [markFilled, setMarkFilled] = useState(false)
+  const [preview, setPreview] = useState<TradePreview | null>(null)
 
   const set = <K extends keyof TicketForm>(key: K, value: TicketForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -120,6 +121,34 @@ export default function DealTicket({
   }, [form.assetClass, form.direction, form.quantity, form.entryPrice, form.markPrice,
       form.commissionPct, form.marginPct, form.market, form.contractCode])
 
+  // 이미 보유 중인 종목이면 이번 체결 후 평균단가가 어떻게 되는지 미리 보여준다.
+  // 저장하지 않는 조회라 전표를 고치는 동안 계속 갱신해도 안전하다.
+  const symbolKey = isEquity ? form.ticker.trim() : form.futureSymbol.trim() || form.contractCode
+  useEffect(() => {
+    const terms = buildTerms()
+    const ok = terms.ok && (isEquity ? /^[0-9A-Za-z]{6}$/.test(symbolKey) : symbolKey.length > 0)
+    if (!ok) { setPreview(null); return }
+    let cancelled = false
+    const id = setTimeout(() => {
+      api.previewTrade({
+        asset_class: form.assetClass,
+        side: form.direction === 'LONG' ? 'BUY' : 'SELL',
+        symbol: symbolKey,
+        name: null,
+        quantity: terms.value.quantity,
+        price: terms.value.entry_price,
+        market: terms.value.market,
+        contract_code: terms.value.contract_code,
+        commission_rate: terms.value.commission_rate,
+        margin_rate: terms.value.margin_rate,
+      }).then((p) => { if (!cancelled) setPreview(p) })
+        .catch(() => { if (!cancelled) setPreview(null) })
+    }, 350)
+    return () => { cancelled = true; clearTimeout(id) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolKey, form.assetClass, form.direction, form.quantity, form.entryPrice,
+      form.commissionPct, form.marginPct, form.market, form.contractCode])
+
   async function loadQuote() {
     setQuoteError([])
     setQuoteBusy(true)
@@ -152,20 +181,34 @@ export default function DealTicket({
     }
   }
 
-  function addToBook() {
+  /** 체결 입력용 요청. 전표의 진입가가 체결가가 된다. */
+  function buildTrade(): TradeCreate | null {
     const terms = buildTerms()
     const errs = terms.ok ? {} : { ...terms.errors }
     const symbol = isEquity ? form.ticker.trim() : form.futureSymbol.trim() || (contract?.name ?? '')
     if (isEquity && !/^[0-9A-Za-z]{6}$/.test(symbol)) errs.ticker = '종목코드 6자리를 입력하세요.'
     setErrors(errs)
-    if (terms.ok && Object.keys(errs).length === 0) {
-      onAddToBook({
-        ...terms.value, symbol,
-        name: isEquity ? form.name.trim() || null : contract?.name ?? null,
-      })
-    } else {
+    if (!terms.ok || Object.keys(errs).length > 0) {
       focusFirstError(errs)
+      return null
     }
+    return {
+      asset_class: form.assetClass,
+      side: form.direction === 'LONG' ? 'BUY' : 'SELL',
+      symbol,
+      name: isEquity ? form.name.trim() || null : contract?.name ?? null,
+      quantity: terms.value.quantity,
+      price: terms.value.entry_price,
+      market: terms.value.market,
+      contract_code: terms.value.contract_code,
+      commission_rate: terms.value.commission_rate,
+      margin_rate: terms.value.margin_rate,
+    }
+  }
+
+  function bookTrade() {
+    const req = buildTrade()
+    if (req) onBookTrade(req)
   }
 
   function focusFirstError(errs: Record<string, string>) {
@@ -349,17 +392,49 @@ export default function DealTicket({
         )}
       </div>
 
+      {preview && preview.holds && (
+        <div className="preview">
+          <span className="preview-label">이번 체결 후</span>
+          {preview.closed_quantity > 0 ? (
+            <>
+              <span className="preview-line">
+                {preview.closed_quantity}주 청산, 실현손익{' '}
+                <span className={`num tone-${tone(preview.realized_gross)}`}>
+                  {formatSignedWon(preview.realized_gross)}
+                </span>{' '}
+                <span className="cell-sub">(비용 전)</span>
+              </span>
+              <span className="preview-line">
+                잔량 <span className="num">{Math.abs(preview.net_quantity_after)}</span>
+                {preview.net_quantity_after === 0
+                  ? ', 포지션이 닫힙니다'
+                  : <>, 평균단가 <span className="num">{formatPrice(preview.avg_price_after)}</span></>}
+              </span>
+            </>
+          ) : (
+            <span className="preview-line">
+              평균단가 <span className="num">{formatPrice(preview.avg_price_before)}</span>
+              {' → '}
+              <span className="num">{formatPrice(preview.avg_price_after)}</span>
+              , 수량 <span className="num">{Math.abs(preview.net_quantity_before)}</span>
+              {' → '}
+              <span className="num">{Math.abs(preview.net_quantity_after)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="ticket-actions">
         <button type="submit" className="btn btn-primary" disabled={busy}>
           {busy ? '평가 중' : '평가하기'}
         </button>
         <button type="button" className="btn btn-secondary" disabled={busy || (isEquity && !canQuote)}
-          onClick={addToBook}>
-          북에 추가
+          onClick={bookTrade}>
+          체결 입력
         </button>
       </div>
       {isEquity && !canQuote && (
-        <p className="btn-reason">북에 추가하려면 종목코드 6자리가 필요합니다.</p>
+        <p className="btn-reason">체결을 입력하려면 종목코드 6자리가 필요합니다.</p>
       )}
     </form>
   )

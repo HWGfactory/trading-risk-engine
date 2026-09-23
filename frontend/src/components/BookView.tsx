@@ -4,11 +4,12 @@ import { api, messagesOf } from '../api'
 import {
   assetLabel, directionLabel, formatPrice, formatSignedWon, formatWon, isNumeric, tone,
 } from '../format'
-import type { BookResponse, BookSummary, Position, Totals } from '../types'
+import type { BookResponse, BookSummary, HistoryRow, Position, Totals } from '../types'
 
 interface Props {
   refreshKey: number
   onGoToValuation: () => void
+  onOpenDetail: (p: Position) => void
 }
 
 interface Row {
@@ -21,7 +22,7 @@ interface Row {
 
 const RECON_LABEL = { MATCHED: '일치', MISMATCHED: '불일치', SKIPPED: '건너뜀' } as const
 
-export default function BookView({ refreshKey, onGoToValuation }: Props) {
+export default function BookView({ refreshKey, onGoToValuation, onOpenDetail }: Props) {
   const [positions, setPositions] = useState<Position[]>([])
   const [summary, setSummary] = useState<BookSummary | null>(null)
   const [run, setRun] = useState<BookResponse | null>(null)
@@ -31,17 +32,19 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
   const [errors, setErrors] = useState<string[]>([])
   const settledRun = useRef<string | null>(null)
 
+  const [history, setHistory] = useState<HistoryRow[]>([])
   const [reloadTick, setReloadTick] = useState(0)
   const reload = () => setReloadTick((t) => t + 1)
 
   // 외부 시스템(백엔드)과 동기화: 부모의 refreshKey 또는 내부 작업 후 다시 읽는다.
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.positions(), api.bookSummary()])
-      .then(([p, s]) => {
+    Promise.all([api.positions(), api.bookSummary(), api.history()])
+      .then(([p, s, h]) => {
         if (cancelled) return
         setPositions(p)
         setSummary(s)
+        setHistory(h.rows)
       })
       .catch((err) => {
         if (!cancelled) setErrors(messagesOf(err))
@@ -67,6 +70,21 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
       settledRun.current = r.run_id
       reload()
     } catch (err) {
+      setErrors(messagesOf(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveSnapshot() {
+    setBusy(true)
+    setErrors([])
+    try {
+      const r = await api.snapshot()
+      setErrors(r.errors)
+      reload()
+    } catch (err) {
+      // 같은 날 이미 찍었으면 409가 온다. 덮어쓰지 않는 것이 원칙이라 안내만 한다.
       setErrors(messagesOf(err))
     } finally {
       setBusy(false)
@@ -103,6 +121,10 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
     return { mark: null, netPnl: null, costs: null, basis: '아직 평가하지 않음', stale: false }
   }
 
+  // 실현손익은 포지션이 들고 있는 누적값이다. 평가와 달리 재평가로 바뀌지 않는다.
+  const realizedTotal = positions
+    .reduce((sum, p) => sum + Number(p.realized_pnl), 0)
+    .toString()
   const totals: Totals | undefined = run?.totals ?? summary?.totals
   const byClass = run?.by_asset_class ?? summary?.by_asset_class ?? {}
   const breaches = run?.breaches ?? summary?.breaches ?? []
@@ -117,10 +139,16 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
         <p className="book-note">
           주식은 저장된 종목코드로 종가를 조회하고, 선물은 평가가격 칸에 입력한 값으로 평가합니다.
         </p>
-        <button type="button" className="btn btn-primary" onClick={revalue}
-          disabled={busy || positions.length === 0}>
-          {busy ? '평가 중' : '전체 재평가'}
-        </button>
+        <div className="bar-actions">
+          <button type="button" className="btn btn-secondary" onClick={saveSnapshot}
+            disabled={busy || positions.length === 0}>
+            오늘 스냅샷 저장
+          </button>
+          <button type="button" className="btn btn-primary" onClick={revalue}
+            disabled={busy || positions.length === 0}>
+            {busy ? '평가 중' : '전체 재평가'}
+          </button>
+        </div>
       </div>
 
       {totals && (
@@ -128,8 +156,12 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
           <div><dt>총노출</dt><dd>{formatWon(totals.gross_exposure)}</dd></div>
           <div><dt>순노출</dt><dd>{formatSignedWon(totals.net_exposure)}</dd></div>
           <div>
-            <dt>순손익</dt>
+            <dt>평가손익</dt>
             <dd className={`tone-${tone(totals.net_pnl)}`}>{formatSignedWon(totals.net_pnl)}</dd>
+          </div>
+          <div>
+            <dt>실현손익 누적</dt>
+            <dd className={`tone-${tone(realizedTotal)}`}>{formatSignedWon(realizedTotal)}</dd>
           </div>
           <div>
             <dt>엔진·SQL 대사</dt>
@@ -181,13 +213,21 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
         <div className="table-wrap">
           <table className="grid">
             <thead>
+              {/* 실현과 평가는 성격이 다른 숫자라 그룹 헤더로 갈라 둔다. */}
+              <tr className="grid-group">
+                <th scope="col" colSpan={5}><span className="sr-only">포지션</span></th>
+                <th scope="col" colSpan={1} className="group-start">확정</th>
+                <th scope="col" colSpan={2} className="group-start">미확정 (평가)</th>
+                <th scope="col" colSpan={2}><span className="sr-only">기준과 작업</span></th>
+              </tr>
               <tr>
                 <th scope="col">종목</th>
                 <th scope="col">방향</th>
                 <th scope="col" className="num">수량</th>
-                <th scope="col" className="num">진입가</th>
+                <th scope="col" className="num">평균단가</th>
                 <th scope="col" className="num">평가가격</th>
-                <th scope="col" className="num">순손익</th>
+                <th scope="col" className="num group-start">실현손익</th>
+                <th scope="col" className="num group-start">평가손익</th>
                 <th scope="col" className="num">비용</th>
                 <th scope="col">평가 기준</th>
                 <th scope="col"><span className="sr-only">작업</span></th>
@@ -201,14 +241,17 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
                 return (
                   <tr key={p.id}>
                     <td>
-                      <span className="cell-main">{p.name ?? p.symbol}</span>
-                      <span className="cell-sub">{assetLabel(p.asset_class)} {p.symbol}</span>
+                      <button type="button" className="cell-link"
+                        onClick={() => onOpenDetail(p)}>
+                        <span className="cell-main">{p.name ?? p.symbol}</span>
+                        <span className="cell-sub">{assetLabel(p.asset_class)} {p.symbol}</span>
+                      </button>
                     </td>
                     <td className={p.direction === 'LONG' ? 'tone-gain' : 'tone-loss'}>
                       {directionLabel(p.direction)}
                     </td>
                     <td className="num">{formatWon(String(p.quantity))}</td>
-                    <td className="num">{formatPrice(p.entry_price)}</td>
+                    <td className="num">{formatPrice(p.avg_price)}</td>
                     <td className="num">
                       {p.asset_class === 'FUTURE' ? (
                         <input className="mark-input" inputMode="decimal"
@@ -217,7 +260,10 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
                           onChange={(e) => setMarks((m) => ({ ...m, [p.id]: e.target.value }))} />
                       ) : formatPrice(r.mark)}
                     </td>
-                    <td className={`num tone-${tone(r.netPnl)}${settled ? ' row-settled' : ''}`}>
+                    <td className={`num group-start tone-${tone(p.realized_pnl)}`}>
+                      {Number(p.realized_pnl) === 0 ? '-' : formatSignedWon(p.realized_pnl)}
+                    </td>
+                    <td className={`num group-start tone-${tone(r.netPnl)}${settled ? ' row-settled' : ''}`}>
                       {formatSignedWon(r.netPnl)}
                     </td>
                     <td className="num">{formatWon(r.costs)}</td>
@@ -257,6 +303,39 @@ export default function BookView({ refreshKey, onGoToValuation }: Props) {
                   <td className="num">{formatWon(t.gross_exposure)}</td>
                   <td className="num">{formatSignedWon(t.net_exposure)}</td>
                   <td className={`num tone-${tone(t.net_pnl)}`}>{formatSignedWon(t.net_pnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="table-wrap">
+          <table className="grid grid-compact">
+            <caption>
+              일자별 손익 추이 (스냅샷 기준, 같은 날 정정본이 있으면 최신 것)
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">날짜</th>
+                <th scope="col" className="num">포지션</th>
+                <th scope="col" className="num group-start">실현손익 누적</th>
+                <th scope="col" className="num group-start">평가손익</th>
+                <th scope="col" className="num">총노출</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.snapshot_date}>
+                  <td className="num">{h.snapshot_date}</td>
+                  <td className="num">{h.position_count}</td>
+                  <td className={`num group-start tone-${tone(h.realized_pnl_cumulative)}`}>
+                    {formatSignedWon(h.realized_pnl_cumulative)}
+                  </td>
+                  <td className={`num group-start tone-${tone(h.unrealized_pnl)}`}>
+                    {formatSignedWon(h.unrealized_pnl)}
+                  </td>
+                  <td className="num">{formatWon(h.gross_exposure)}</td>
                 </tr>
               ))}
             </tbody>

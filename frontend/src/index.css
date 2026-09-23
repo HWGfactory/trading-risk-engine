@@ -301,6 +301,31 @@ input[inputmode='numeric'] {
   font-size: var(--t-meta); color: var(--ink-muted); min-height: 18px;
 }
 
+/* 체결 전 미리보기. 새 색이나 새 상자를 쓰지 않고 기존 sunken 면과 하이라인만 쓴다. */
+.preview {
+  display: grid; gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-sunken); border-radius: var(--r-control);
+  font-size: var(--t-meta);
+}
+.preview-label { color: var(--ink-muted); }
+.preview-line { color: var(--ink); }
+
+/* 종목 셀을 눌러 상세로 간다. 버튼이지만 표 안에서는 글자처럼 보여야 한다. */
+.cell-link {
+  display: grid; gap: 1px; text-align: left;
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer; color: inherit;
+  border-radius: var(--r-control);
+}
+.cell-link:hover .cell-main { color: var(--accent); }
+
+/* 확정(실현)과 미확정(평가)을 가르는 세로 구분선. 색이 아니라 선으로 나눈다. */
+.grid-group th {
+  font-size: var(--t-meta); color: var(--ink-muted); font-weight: 500;
+  padding-bottom: 2px; border-bottom: 0;
+}
+.grid .group-start { border-inline-start: 1px solid var(--rule); }
+
 /* ---------- 평가 명세 ---------- */
 
 .statement { padding: var(--sp-5); }
@@ -375,7 +400,8 @@ input[inputmode='numeric'] {
 .book-note { margin: 0; color: var(--ink-muted); font-size: var(--t-sm); max-width: 60ch; }
 
 .strip {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: auto auto;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-rows: auto auto;
   margin: 0; border-block: 1px solid var(--rule);
 }
 .strip > div {
@@ -606,3 +632,5 @@ input[inputmode='numeric'] {
   .skeleton { animation: none; opacity: 0.8; }
   .row-settled { animation-duration: 1ms; background: var(--accent-soft); }
 }
+
+.bar-actions { display: flex; gap: var(--sp-2); }

@@ -74,6 +74,10 @@
       const tax = rows.find((r) => r.textContent.includes('거래세')) || rows[0]
       tax.focus()
       await sleep(600)
+    } else if (act === 'detail') {
+      await sleep(1600)
+      d.querySelector('.cell-link')?.click()
+      await sleep(1200)
     } else if (act === 'recon') {
       await sleep(1400)
       d.querySelector('.book .btn-primary')?.click()

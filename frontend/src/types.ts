@@ -21,9 +21,20 @@ export interface ValuationRequest extends TradeTerms {
   mark_price: Dec
 }
 
-export interface PositionCreate extends TradeTerms {
+export type Side = 'BUY' | 'SELL'
+
+/** 체결 입력. 포지션을 직접 만들지 않고 체결을 쌓는다. */
+export interface TradeCreate {
+  asset_class: AssetClass
+  side: Side
   symbol: string
   name: string | null
+  quantity: number
+  price: Dec
+  market: Market | null
+  contract_code: string | null
+  commission_rate: Dec
+  margin_rate: Dec | null
 }
 
 export interface TraceStep {
@@ -112,15 +123,22 @@ export interface LatestValuation {
 
 export interface Position {
   id: number
+  instrument_id: number
   symbol: string
   name: string | null
   asset_class: AssetClass
   market: Market | null
   contract_code: string | null
   multiplier: Dec
+  /** 매수 +, 매도 −. 부호가 방향이다. */
+  net_quantity: number
   direction: Direction
   quantity: number
+  /** 이동평균 단가. entry_price와 같은 값이며 기존 화면 호환용으로 둘 다 내려온다. */
+  avg_price: Dec
   entry_price: Dec
+  realized_pnl: Dec
+  entry_cost: Dec
   commission_rate: Dec
   margin_rate: Dec | null
   opened_at: string
@@ -183,4 +201,81 @@ export interface BookSummary {
   breaches: Breach[]
   limit_usage: LimitUsage[]
   last_valued_at: string | null
+}
+
+// ---------- 체결과 스냅샷 (backend schemas.py와 1:1) ----------
+
+export interface Trade {
+  id: number
+  instrument_id: number
+  symbol: string
+  name: string | null
+  asset_class: AssetClass
+  side: Side
+  quantity: number
+  price: Dec
+  commission_rate: Dec
+  /** 이 체결 중 청산에 쓰인 수량 */
+  closed_quantity: number
+  /** 이 체결이 확정한 실현손익 (비용 차감 후) */
+  realized_pnl: Dec
+  commission: Dec
+  transaction_tax: Dec
+  /** 이 체결 직후 평균단가 */
+  avg_price_after: Dec
+  /** 이 체결 직후 순수량 */
+  qty_after: number
+  traded_at: string
+}
+
+export interface TradeResponse {
+  trade: Trade
+  position: Position
+  trace: TraceStep[]
+  realized_gross: Dec
+  message: string
+}
+
+export interface TradePreview {
+  holds: boolean
+  net_quantity_before: number
+  avg_price_before: Dec
+  net_quantity_after: number
+  avg_price_after: Dec
+  closed_quantity: number
+  realized_gross: Dec
+  trace: TraceStep[]
+}
+
+export interface SnapshotRow {
+  instrument_id: number
+  symbol: string
+  name: string | null
+  net_quantity: number
+  avg_price: Dec
+  mark_price: Dec
+  price_source: string
+  unrealized_pnl: Dec
+  realized_pnl_cumulative: Dec
+  signed_exposure: Dec
+}
+
+export interface SnapshotResponse {
+  snapshot_date: string
+  revision: number
+  rows: SnapshotRow[]
+  errors: string[]
+}
+
+export interface HistoryRow {
+  snapshot_date: string
+  position_count: number
+  unrealized_pnl: Dec
+  realized_pnl_cumulative: Dec
+  gross_exposure: Dec
+  net_exposure: Dec
+}
+
+export interface BookHistory {
+  rows: HistoryRow[]
 }

@@ -1,6 +1,6 @@
 import type {
-  BookResponse, BookSummary, Position, PositionCreate, Quote, Reference,
-  ValuationRequest, ValuationResponse,
+  BookHistory, BookResponse, BookSummary, Position, Quote, Reference, SnapshotResponse,
+  Trade, TradeCreate, TradePreview, TradeResponse, ValuationRequest, ValuationResponse,
 } from './types'
 
 export class ApiError extends Error {
@@ -41,8 +41,16 @@ export const api = {
   quote: (ticker: string) => request<Quote>(`/api/market/quote/${encodeURIComponent(ticker)}`),
   value: (req: ValuationRequest) => post<ValuationResponse>('/api/valuation/linear', req),
   positions: () => request<Position[]>('/api/positions'),
-  createPosition: (req: PositionCreate) => post<Position>('/api/positions', req),
-  closePosition: (id: number) => request<void>(`/api/positions/${id}/close`, { method: 'POST' }),
+  // 체결을 쌓으면 포지션이 따라 바뀐다. 포지션을 직접 만들지 않는다.
+  createTrade: (req: TradeCreate) => post<TradeResponse>('/api/trades', req),
+  previewTrade: (req: TradeCreate) => post<TradePreview>('/api/trades/preview', req),
+  trades: (instrumentId?: number) =>
+    request<Trade[]>(`/api/trades${instrumentId ? `?instrument_id=${instrumentId}` : ''}`),
+  // 청산은 반대 방향 전량 체결로 동작한다. 상태만 바꾸지 않는다.
+  closePosition: (id: number) => post<TradeResponse>(`/api/positions/${id}/close`, {}),
+  snapshot: (revise = false) =>
+    post<SnapshotResponse>(`/api/book/snapshot${revise ? '?revise=true' : ''}`, {}),
+  history: () => request<BookHistory>('/api/book/history'),
   revalue: (marks: Record<number, string>) => post<BookResponse>('/api/book/revalue', { marks }),
   bookSummary: () => request<BookSummary>('/api/book/summary'),
 }

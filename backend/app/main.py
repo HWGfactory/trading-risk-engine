@@ -215,7 +215,8 @@ def position_out(row: sqlite3.Row) -> PositionOut:
     net = int(row["net_quantity"])
     avg = Decimal(row["avg_price"])
     return PositionOut(
-        id=row["id"], symbol=row["symbol"], name=row["name"], asset_class=row["asset_class"],
+        id=row["id"], instrument_id=int(row["instrument_id"]),
+        symbol=row["symbol"], name=row["name"], asset_class=row["asset_class"],
         market=row["market"], contract_code=row["contract_code"], multiplier=Decimal(row["multiplier"]),
         net_quantity=net, direction="LONG" if net >= 0 else "SHORT", quantity=abs(net),
         avg_price=avg, entry_price=avg,

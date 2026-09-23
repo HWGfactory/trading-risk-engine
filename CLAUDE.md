@@ -44,6 +44,7 @@ backend/
     schemas.py      요청·응답 스키마 (Decimal은 JSON 문자열)
     conventions.py  YAML 로더 (UTF-8 고정)
     linear.py       주식·선물 평가 엔진 (순수 함수, I/O 없음)
+    trades.py       체결 기반 포지션 엔진 (이동평균법, 순수 함수)
     portfolio.py    북 집계, 한도 점검
     prices.py       시세 어댑터 (pykrx → FDR, 소스별 10초 제한)
     repository.py   SQL 접근 계층
@@ -51,6 +52,7 @@ backend/
   tests/            pytest (엔진 정답 케이스, API 통합, 시세 폴백)
   scripts/
     seed_demo.py          시연용 예시 북 (TestClient로 API를 그대로 통과)
+    migrate_to_trades.py  기존 positions를 체결 기반 구조로 이전
     shoot_screenshots.py  문서용 스크린샷 (Chrome headless)
     shoot_states.py       빈 북·로딩·오류·근거 추적·대사 상태 스크린샷
 frontend/
@@ -71,12 +73,28 @@ frontend/
       MiniEvaluator.tsx       홈 히어로의 실제 평가기
       DealTicket.tsx          매매 전표 입력
       ValuationStatement.tsx  결과·계산 근거 표
-      BookView.tsx            북 현황·재평가·대사
+      BookView.tsx            북 현황·재평가·대사·손익 추이
+      PositionDetail.tsx      종목별 체결 이력과 평균단가 변화
       AnimatedWon.tsx         숫자 전환 (마지막 프레임은 백엔드 문자열 그대로)
 DESIGN.md           색·글꼴·간격·모션의 결정과 근거
 METHODOLOGY.md      산식과 근거, 손계산 예시 (테스트 기대값의 출처)
 docs/screenshots/   문서용 스크린샷 (3화면 x 1280/375 x 라이트/다크 + 상태 5종)
 ```
+
+## 데이터 모델
+포지션은 직접 입력받는 값이 아니라 **체결(trades)을 합쳐 만든 현재 상태**다.
+
+```
+trades          체결 한 건이 한 행. append-only. 그때의 결과값(평균단가·실현손익)을 함께 박아 둔다
+  ↓ 증분 갱신 (전체 재계산 아님)
+positions       종목당 한 행. net_quantity 부호가 방향, avg_price는 이동평균, realized_pnl은 누적
+  ↓ 재평가
+valuations      평가 이력. append-only
+  ↓ 하루 한 번
+daily_snapshots 일별 스냅샷. append-only. 같은 날 다시 찍으면 정정본(revision)을 새 행으로
+```
+
+실현손익은 **이동평균법**이다(FIFO 아님). 규칙과 손계산 예시는 METHODOLOGY.md 7장에 있다.
 
 ## 개발 규칙 (반드시 지킬 것)
 1. 금액·가격·비율 계산에 float 금지. 백엔드는 Decimal, 프론트는 계산하지 않고 표시만 한다.
@@ -104,6 +122,10 @@ docs/screenshots/   문서용 스크린샷 (3화면 x 1280/375 x 라이트/다�
 13. 화면 문구에 엠대시(U+2014)와 엔대시(U+2013)를 쓰지 않는다. 음수 부호(U+2212)는 수학 기호라 허용한다.
     값이 없을 때는 format.ts의 EMPTY('-')를 쓴다.
 14. 근거 줄을 추가하면 TraceStep의 inputs도 함께 채운다. 화면의 근거 추적이 그 목록만 보고 동작한다.
+15. 포지션 상태를 직접 쓰지 않는다. 체결을 넣고 trades.py가 갱신하게 한다.
+    평균단가는 소수 4자리 반올림, 실현손익은 원 단위다.
+16. 날짜가 필요한 곳은 Asia/Seoul 기준으로 파이썬에서 계산한다.
+    SQLite의 datetime('now')는 UTC라서 한국 저녁에 찍으면 전날로 기록된다.
 
 ## 알아둘 제약
 - pykrx는 import 시 "KRX 로그인 실패" 안내를 출력하지만 오류가 아니다. 수정주가 조회는 로그인 없이 된다.
@@ -115,10 +137,10 @@ docs/screenshots/   문서용 스크린샷 (3화면 x 1280/375 x 라이트/다�
 
 ## 로드맵
 - [x] 1단계: 주식·선물(선형 상품) 시가평가·손익·비용, 북 집계, 한도 점검, 엔진·SQL 대사, 감사추적
-- [ ] 2단계: 옵션 — QuantLib 블랙-숄즈-머튼 이론가, 그릭스(Delta·Gamma·Vega·Theta·Rho), 내재변동성,
+- [ ] 2단계: 옵션 QuantLib 블랙-숄즈-머튼 이론가, 그릭스(Delta·Gamma·Vega·Theta·Rho), 내재변동성,
       시장가 대비 고평가/저평가 표시. 코스피200 옵션 승수는 YAML에 추가(KRX 명세 확인 후).
       무위험이자율은 한국은행 ECOS(ecos-reader)에서 CD 91일물 등으로 가져온다(API 키 필요).
-- [ ] 3단계: 채권 — QuantLib FixedRateBond로 가격, 수정듀레이션, DV01. 할인금리는 ECOS 국고채 수익률.
-- [ ] 4단계: 북 VaR — pykrx 일별 수익률로 모수적 VaR(95%/99%)와 역사적 VaR, 한도 점검에 VaR 한도 추가.
-- [ ] 5단계: AI — Claude API로 북 리스크 코멘트 초안 생성(숫자는 엔진 값만 인용, LLM이 숫자를 만들지 않도록 검증),
+- [ ] 3단계: 채권 QuantLib FixedRateBond로 가격, 수정듀레이션, DV01. 할인금리는 ECOS 국고채 수익률.
+- [ ] 4단계: 북 VaR pykrx 일별 수익률로 모수적 VaR(95%/99%)와 역사적 VaR, 한도 점검에 VaR 한도 추가.
+- [ ] 5단계: AI Claude API로 북 리스크 코멘트 초안 생성(숫자는 엔진 값만 인용, LLM이 숫자를 만들지 않도록 검증),
       계산 엔진을 MCP 서버로 감싸 에이전트가 도구로 호출하게 만들기.

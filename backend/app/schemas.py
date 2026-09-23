@@ -186,6 +186,7 @@ class LatestValuationOut(BaseModel):
 
 class PositionOut(BaseModel):
     id: int
+    instrument_id: int
     symbol: str
     name: str | None
     asset_class: AssetClass

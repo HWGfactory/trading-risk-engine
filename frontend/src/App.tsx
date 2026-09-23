@@ -9,7 +9,8 @@ import ValuationStatement from './components/ValuationStatement'
 import { useRoute } from './router'
 import { useTheme } from './theme'
 import { useTrace } from './trace'
-import type { PositionCreate, Reference, ValuationRequest, ValuationResponse } from './types'
+import PositionDetail from './components/PositionDetail'
+import type { Position, Reference, TradeCreate, ValuationRequest, ValuationResponse } from './types'
 
 const REPO = 'https://github.com/HWGfactory/trading-risk-engine'
 
@@ -65,13 +66,14 @@ function ValuationPage() {
     }
   }
 
-  async function addToBook(req: PositionCreate) {
+  async function bookTrade(req: TradeCreate) {
     setBusy(true)
     setErrors([])
     setAdded(null)
     try {
-      const p = await api.createPosition(req)
-      setAdded(p.name ?? p.symbol)
+      const r = await api.createTrade(req)
+      // 체결 결과 문구는 백엔드가 만든다. 부분 청산인지 방향 전환인지 엔진이 안다.
+      setAdded(`${r.position.name ?? r.position.symbol} ${r.message}`)
     } catch (err) {
       setErrors(messagesOf(err))
     } finally {
@@ -111,7 +113,7 @@ function ValuationPage() {
       <div className="desk">
         <div>
           <DealTicket reference={reference} busy={busy} trace={trace} addedName={added}
-            onEvaluate={evaluate} onAddToBook={addToBook} />
+            onEvaluate={evaluate} onBookTrade={bookTrade} />
           {errors.length > 0 && (
             <ul className="alerts">
               {errors.map((m) => (
@@ -130,10 +132,13 @@ function ValuationPage() {
 }
 
 function BookPage({ onGoToValuation }: { onGoToValuation: () => void }) {
+  const [detail, setDetail] = useState<Position | null>(null)
   return (
     <div className="wrap page">
-      <h1 className="page-title">북 현황</h1>
-      <BookView refreshKey={0} onGoToValuation={onGoToValuation} />
+      <h1 className="page-title">{detail ? '종목 상세' : '북 현황'}</h1>
+      {detail
+        ? <PositionDetail position={detail} onBack={() => setDetail(null)} />
+        : <BookView refreshKey={0} onGoToValuation={onGoToValuation} onOpenDetail={setDetail} />}
     </div>
   )
 }
