@@ -465,7 +465,7 @@ input[inputmode='numeric'] {
 .page-home { display: grid; gap: var(--sp-9); padding-block: var(--sp-8) var(--sp-9); }
 
 .hero { display: grid; grid-template-columns: 44fr 56fr; gap: var(--sp-8); align-items: start; }
-.hero-copy { display: grid; gap: var(--sp-4); align-content: start; padding-top: var(--sp-4); }
+.hero-copy { display: grid; gap: var(--sp-4); align-content: start; }
 .hero h1 {
   margin: 0; font-size: var(--t-display); font-weight: 600;
   letter-spacing: -0.03em; line-height: 1.12; max-width: 14ch;
@@ -473,17 +473,6 @@ input[inputmode='numeric'] {
 .hero p { margin: 0; color: var(--ink-muted); max-width: 42ch; font-size: var(--t-lg); line-height: 1.55; }
 .hero-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-2); }
 .hero-actions .btn { padding: 11px 18px; font-size: var(--t-base); }
-
-.demo-label {
-  display: flex; align-items: baseline; gap: var(--sp-2);
-  font-size: var(--t-meta); color: var(--ink-muted); margin: 0 0 var(--sp-2);
-}
-.demo-tag {
-  flex: none; white-space: nowrap;
-  font-family: var(--font-mono); font-size: var(--t-meta); letter-spacing: 0.06em;
-  border: 1px solid var(--rule-strong); border-radius: var(--r-control);
-  padding: 1px 6px; color: var(--ink-muted);
-}
 
 .mini { display: grid; }
 .mini-inputs {
@@ -561,7 +550,6 @@ input[inputmode='numeric'] {
 @media (max-width: 1100px) {
   .desk { grid-template-columns: minmax(0, 1fr); }
   .hero { grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); }
-  .hero-copy { padding-top: 0; }
   .hero h1 { max-width: 20ch; }
   .evidence { grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
   .evidence-head { position: static; }
