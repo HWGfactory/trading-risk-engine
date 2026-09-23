@@ -51,8 +51,3 @@ npm run dev     # http://localhost:5173
 - [METHODOLOGY.md](METHODOLOGY.md): 산식, 세율 출처, 손계산 예시
 - [DESIGN.md](DESIGN.md): 색·글꼴·모션을 정한 이유
 - [docs/screenshots](docs/screenshots): 모든 화면과 상태 (라이트·다크, 데스크톱·모바일)
-
-## 다루지 않는 것
-
-옵션·채권 평가와 VaR는 이 프로젝트의 범위에 넣지 않았습니다.
-리스크 한도 값은 시연용 예시이며, 실제 한도는 회사마다 다릅니다.
