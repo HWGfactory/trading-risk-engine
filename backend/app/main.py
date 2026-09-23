@@ -10,9 +10,10 @@ import sqlite3
 import uuid
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,15 +23,17 @@ from fastapi.responses import JSONResponse, Response
 from app import repository as repo
 from app.conventions import Conventions, ContractSpec, TaxRule, load_conventions
 from app.linear import LinearPosition, value_linear
+from app.trades import Fill, InstrumentSpec as TradeSpec, PositionState, TradeResult, apply_trade
 from app.portfolio import (BookItem, BookSummary, Totals, check_book_limits, limit_usage,
                            summarize_book)
 from app.prices import PriceFetcher, PriceQuote, PriceUnavailable, fetch_latest_close
 from app.schemas import (AppliedConventions, BookResponse, BookSummaryOut, BreachOut, ContractOut,
-                         LatestValuationOut, LimitsOut, LimitUsageOut, PositionCreate,
-                         PositionOut, QuoteOut,
-                         ReconciliationOut, ReferenceOut, RevaluedPosition, RevalueRequest,
-                         TaxRuleOut, TotalsOut, TradeTerms, ValuationOut, ValuationRequest,
-                         ValuationResponse)
+                         BookHistoryOut, HistoryRow, LatestValuationOut, LimitsOut,
+                         LimitUsageOut, PositionOut, QuoteOut, ReconciliationOut, ReferenceOut,
+                         RevaluedPosition, RevalueRequest, SnapshotResponse, SnapshotRow,
+                         TaxRuleOut, TotalsOut, TraceStepOut, TradeCreate, TradeOut,
+                         TradePreview, TradeResponse, TradeTerms, ValuationOut,
+                         ValuationRequest, ValuationResponse)
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -82,6 +85,7 @@ FIELD_LABELS = {
     "asset_class": "상품", "direction": "방향", "quantity": "수량", "entry_price": "진입가",
     "mark_price": "평가가격", "market": "시장", "contract_code": "계약", "symbol": "종목",
     "commission_rate": "수수료율", "margin_rate": "증거금률", "marks": "평가가격",
+    "side": "매매구분", "price": "체결가",
 }
 
 
@@ -144,18 +148,58 @@ def resolve_terms(terms: TradeTerms, conv: Conventions,
     return spec.multiplier, None, spec
 
 
+def resolve_terms_for_trade(req: TradeCreate, conv: Conventions):
+    """체결 요청에서 거래승수·거래세 규칙·계약명세를 확정한다(설정 파일 기준)."""
+    if req.asset_class == "EQUITY":
+        assert req.market is not None
+        return Decimal(1), conv.tax_rule(req.market), None
+    assert req.contract_code is not None
+    spec = conv.contract(req.contract_code)
+    if not spec.is_on_tick(req.price):
+        raise ValueError(f"체결가 {req.price}는 {spec.name} 호가단위 {spec.tick_size}의 배수가 아닙니다.")
+    return spec.multiplier, None, spec
+
+
+def _trade_out(row: sqlite3.Row) -> TradeOut:
+    return TradeOut(
+        id=int(row["id"]), instrument_id=int(row["instrument_id"]), symbol=row["symbol"],
+        name=row["name"], asset_class=row["asset_class"], side=row["side"],
+        quantity=int(row["quantity"]), price=Decimal(row["price"]),
+        commission_rate=Decimal(row["commission_rate"]),
+        closed_quantity=int(row["closed_quantity"]),
+        realized_pnl=Decimal(int(row["realized_pnl"])),
+        commission=Decimal(int(row["commission"])),
+        transaction_tax=Decimal(int(row["transaction_tax"])),
+        avg_price_after=Decimal(row["avg_price_after"]), qty_after=int(row["qty_after"]),
+        traded_at=row["traded_at"],
+    )
+
+
 def position_from_row(row: sqlite3.Row, mark_price: Decimal, conv: Conventions) -> LinearPosition:
+    """평가용 포지션. 진입가 자리에 이동평균 단가가 들어간다."""
     market = row["market"]
+    net = int(row["net_quantity"])
     return LinearPosition(
         asset_class=row["asset_class"],
-        direction=row["direction"],
-        quantity=int(row["quantity"]),
-        entry_price=Decimal(row["entry_price"]),
+        direction="LONG" if net > 0 else "SHORT",
+        quantity=abs(net),
+        entry_price=Decimal(row["avg_price"]),
         mark_price=mark_price,
         multiplier=Decimal(row["multiplier"]),
         commission_rate=Decimal(row["commission_rate"]),
         tax_rule=conv.tax_rule(market) if market else None,
         margin_rate=Decimal(row["margin_rate"]) if row["margin_rate"] is not None else None,
+        # 실제로 낸 진입 수수료를 쓴다. 추정하지 않는다.
+        entry_commission_paid=Decimal(int(row["entry_cost"])),
+    )
+
+
+def instrument_spec(row: sqlite3.Row, conv: Conventions) -> TradeSpec:
+    market = row["market"]
+    return TradeSpec(
+        asset_class=row["asset_class"],
+        multiplier=Decimal(row["multiplier"]),
+        tax_rule=conv.tax_rule(market) if market else None,
     )
 
 
@@ -168,10 +212,14 @@ def position_out(row: sqlite3.Row) -> PositionOut:
             signed_exposure=Decimal(row["signed_exposure"]), gross_pnl=Decimal(row["gross_pnl"]),
             total_costs=Decimal(row["total_costs"]), net_pnl=Decimal(row["net_pnl"]),
         )
+    net = int(row["net_quantity"])
+    avg = Decimal(row["avg_price"])
     return PositionOut(
         id=row["id"], symbol=row["symbol"], name=row["name"], asset_class=row["asset_class"],
         market=row["market"], contract_code=row["contract_code"], multiplier=Decimal(row["multiplier"]),
-        direction=row["direction"], quantity=row["quantity"], entry_price=Decimal(row["entry_price"]),
+        net_quantity=net, direction="LONG" if net >= 0 else "SHORT", quantity=abs(net),
+        avg_price=avg, entry_price=avg,
+        realized_pnl=Decimal(int(row["realized_pnl"])), entry_cost=Decimal(int(row["entry_cost"])),
         commission_rate=Decimal(row["commission_rate"]),
         margin_rate=Decimal(row["margin_rate"]) if row["margin_rate"] is not None else None,
         opened_at=row["opened_at"], latest=latest,
@@ -267,29 +315,134 @@ def list_positions(conn: sqlite3.Connection = Depends(get_db)) -> list[PositionO
     return [position_out(r) for r in repo.list_open_positions(conn)]
 
 
-@app.post("/api/positions", response_model=PositionOut, status_code=201)
-def create_position(req: PositionCreate, conn: sqlite3.Connection = Depends(get_db),
-                    conv: Conventions = Depends(get_conventions)) -> PositionOut:
-    multiplier, _, spec = resolve_terms(req, conv)
-    instrument_id = repo.upsert_instrument(
-        conn, symbol=req.symbol, name=req.name or (spec.name if spec else None),
-        asset_class=req.asset_class, market=req.market,
-        contract_code=req.contract_code, multiplier=multiplier)
-    position_id = repo.create_position(
-        conn, instrument_id=instrument_id, direction=req.direction, quantity=req.quantity,
-        entry_price=req.entry_price, commission_rate=req.commission_rate, margin_rate=req.margin_rate)
-    conn.commit()
+def _apply_fill(conn: sqlite3.Connection, req: TradeCreate, conv: Conventions,
+                *, persist: bool) -> tuple[sqlite3.Row, TradeResult, TradeSpec, int]:
+    """체결 한 건을 해석한다. persist=False면 DB를 바꾸지 않고 결과만 계산한다(미리보기)."""
+    multiplier, _, spec = resolve_terms_for_trade(req, conv)
+    if persist:
+        instrument_id = repo.upsert_instrument(
+            conn, symbol=req.symbol, name=req.name or (spec.name if spec else None),
+            asset_class=req.asset_class, market=req.market,
+            contract_code=req.contract_code, multiplier=multiplier)
+        pos_row = repo.get_or_create_position(conn, instrument_id=instrument_id)
+    else:
+        found = conn.execute(
+            "SELECT id FROM instruments WHERE symbol = ? AND asset_class = ?",
+            (req.symbol, req.asset_class)).fetchone()
+        instrument_id = int(found["id"]) if found else 0
+        pos_row = repo.get_or_create_position(conn, instrument_id=instrument_id) if instrument_id else None
+
+    before = PositionState(
+        net_quantity=int(pos_row["net_quantity"]) if pos_row else 0,
+        avg_price=Decimal(pos_row["avg_price"]) if pos_row else Decimal(0),
+        realized_pnl=Decimal(int(pos_row["realized_pnl"])) if pos_row else Decimal(0),
+        entry_cost=Decimal(int(pos_row["entry_cost"])) if pos_row else Decimal(0),
+    )
+    tspec = TradeSpec(asset_class=req.asset_class, multiplier=multiplier,
+                      tax_rule=conv.tax_rule(req.market) if req.market else None)
+    result = apply_trade(before, Fill(req.side, req.quantity, req.price, req.commission_rate), tspec)
+    return pos_row, result, tspec, instrument_id
+
+
+@app.post("/api/trades", response_model=TradeResponse, status_code=201)
+def create_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
+                 conv: Conventions = Depends(get_conventions)) -> TradeResponse:
+    """체결 입력. instrument upsert, 포지션 증분 갱신, 체결 저장을 한 트랜잭션으로 처리한다."""
+    try:
+        pos_row, result, _, instrument_id = _apply_fill(conn, req, conv, persist=True)
+        repo.update_position(
+            conn, position_id=int(pos_row["id"]),
+            net_quantity=result.after.net_quantity, avg_price=result.after.avg_price,
+            realized_pnl=result.after.realized_pnl, entry_cost=result.after.entry_cost,
+            commission_rate=req.commission_rate, margin_rate=req.margin_rate)
+        trade_id = repo.insert_trade(
+            conn, instrument_id=instrument_id, side=req.side, quantity=req.quantity,
+            price=req.price, commission_rate=req.commission_rate,
+            closed_quantity=result.closed_quantity, realized_pnl=result.realized_delta,
+            commission=result.commission, transaction_tax=result.transaction_tax,
+            avg_price_after=result.after.avg_price, qty_after=result.after.net_quantity)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    trade_row = conn.execute(
+        """SELECT t.*, i.symbol, i.name, i.asset_class
+           FROM trades t JOIN instruments i ON i.id = t.instrument_id WHERE t.id = ?""",
+        (trade_id,)).fetchone()
+    position = repo.find_position_by_instrument(conn, instrument_id)
+    assert position is not None
+
+    if result.closed_quantity and result.after.is_flat:
+        message = f"{req.quantity}주를 청산해 포지션을 닫았습니다."
+    elif result.closed_quantity and len(result.legs) == 2:
+        side_word = "매도" if req.side == "SELL" else "매수"
+        message = (f"{result.closed_quantity}주를 청산하고 남은 "
+                   f"{req.quantity - result.closed_quantity}주로 {side_word} 포지션을 새로 잡았습니다.")
+    elif result.closed_quantity:
+        message = f"{result.closed_quantity}주를 부분 청산했습니다."
+    else:
+        message = f"평균단가가 {result.after.avg_price}가 되었습니다."
+
+    return TradeResponse(
+        trade=_trade_out(trade_row),
+        position=position_out(position),
+        trace=[TraceStepOut(**st.__dict__) for st in result.trace],
+        realized_gross=result.realized_gross,
+        message=message,
+    )
+
+
+@app.post("/api/trades/preview", response_model=TradePreview)
+def preview_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
+                  conv: Conventions = Depends(get_conventions)) -> TradePreview:
+    """체결 전 미리보기. DB를 바꾸지 않는다."""
+    try:
+        pos_row, result, _, _ = _apply_fill(conn, req, conv, persist=False)
+    finally:
+        conn.rollback()
+    return TradePreview(
+        holds=result.before.net_quantity != 0,
+        net_quantity_before=result.before.net_quantity,
+        avg_price_before=result.before.avg_price,
+        net_quantity_after=result.after.net_quantity,
+        avg_price_after=result.after.avg_price,
+        closed_quantity=result.closed_quantity,
+        realized_gross=result.realized_gross,
+        trace=[TraceStepOut(**st.__dict__) for st in result.trace],
+    )
+
+
+@app.get("/api/trades", response_model=list[TradeOut])
+def list_trades(instrument_id: int | None = None,
+                conn: sqlite3.Connection = Depends(get_db)) -> list[TradeOut]:
+    return [_trade_out(r) for r in repo.list_trades(conn, instrument_id)]
+
+
+@app.post("/api/positions/{position_id}/close", response_model=TradeResponse)
+def close_position(position_id: int, conn: sqlite3.Connection = Depends(get_db),
+                   conv: Conventions = Depends(get_conventions)) -> TradeResponse:
+    """청산은 이제 '반대 방향 전량 체결'로 동작한다.
+
+    예전처럼 상태만 CLOSED로 바꾸지 않는다. 체결이 한 건 쌓이고 실현손익이 확정된다.
+    평가가격이 필요하므로 최근 평가가 있어야 한다.
+    """
     row = repo.get_position(conn, position_id)
-    assert row is not None
-    return position_out(row)
-
-
-@app.post("/api/positions/{position_id}/close", status_code=204)
-def close_position(position_id: int, conn: sqlite3.Connection = Depends(get_db)) -> Response:
-    if not repo.close_position(conn, position_id):
+    if row is None or row["status"] != "OPEN" or int(row["net_quantity"]) == 0:
         raise HTTPException(status_code=404, detail=["열려 있는 포지션을 찾을 수 없습니다."])
-    conn.commit()
-    return Response(status_code=204)
+    if row["mark_price"] is None:
+        raise HTTPException(status_code=409, detail=[
+            "청산 가격을 알 수 없습니다. 먼저 재평가해 평가가격을 확정하거나, 체결 입력으로 직접 청산하세요."])
+
+    net = int(row["net_quantity"])
+    req = TradeCreate(
+        asset_class=row["asset_class"], side="SELL" if net > 0 else "BUY",
+        symbol=row["symbol"], name=row["name"], quantity=abs(net),
+        price=Decimal(row["mark_price"]), market=row["market"],
+        contract_code=row["contract_code"], commission_rate=Decimal(row["commission_rate"]),
+        margin_rate=Decimal(row["margin_rate"]) if row["margin_rate"] is not None else None,
+    )
+    return create_trade(req, conn, conv)
 
 
 @app.post("/api/book/revalue", response_model=BookResponse)
@@ -332,7 +485,8 @@ def revalue_book(req: RevalueRequest, conn: sqlite3.Connection = Depends(get_db)
         items.append(BookItem(f"#{pid} {symbol}", row["asset_class"], valuation))
         results.append(RevaluedPosition(
             position_id=pid, symbol=symbol, name=row["name"], asset_class=row["asset_class"],
-            direction=row["direction"], quantity=row["quantity"], entry_price=Decimal(row["entry_price"]),
+            direction="LONG" if int(row["net_quantity"]) > 0 else "SHORT",
+            quantity=abs(int(row["net_quantity"])), entry_price=Decimal(row["avg_price"]),
             mark_price=mark, price_source=source, price_as_of=as_of, price_is_stale=stale,
             valuation=ValuationOut.from_engine(valuation)))
     conn.commit()
@@ -369,3 +523,75 @@ def book_summary(conn: sqlite3.Connection = Depends(get_db),
         limit_usage=[LimitUsageOut.from_engine(u) for u in usage],
         last_valued_at=repo.last_valued_at(conn),
     )
+
+
+# ---------- 일별 스냅샷 ----------
+
+def seoul_today() -> str:
+    """스냅샷 날짜는 Asia/Seoul 기준이다.
+
+    SQLite의 datetime('now')는 UTC라서 한국 저녁에 찍으면 전날로 기록된다.
+    """
+    return datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+
+
+@app.post("/api/book/snapshot", response_model=SnapshotResponse, status_code=201)
+def take_snapshot(revise: bool = False, conn: sqlite3.Connection = Depends(get_db),
+                  conv: Conventions = Depends(get_conventions)) -> SnapshotResponse:
+    """오늘(한국 시간) 날짜로 스냅샷을 저장한다.
+
+    이미 찍힌 날이면 409로 거절한다. 덮어쓰지 않는다.
+    다시 찍어야 하면 ?revise=true로 정정본(revision +1)을 새 행으로 추가한다.
+    이전 행은 그대로 남는다.
+    """
+    snapshot_date = seoul_today()
+    existing = repo.snapshot_exists(conn, snapshot_date)
+    if existing and not revise:
+        raise HTTPException(status_code=409, detail=[
+            f"{snapshot_date} 스냅샷이 이미 있습니다(정정본 {existing}). "
+            "스냅샷은 덮어쓰지 않습니다. 다시 찍으려면 정정본으로 추가하세요."])
+    revision = existing + 1
+
+    rows: list[SnapshotRow] = []
+    errors: list[str] = []
+    for row in repo.list_open_positions(conn):
+        pid, symbol = row["id"], row["symbol"]
+        if row["mark_price"] is None:
+            errors.append(f"#{pid} {symbol}: 평가 이력이 없어 스냅샷에 담지 못했습니다. 먼저 재평가하세요.")
+            continue
+        mark = Decimal(row["mark_price"])
+        try:
+            valuation = value_linear(position_from_row(row, mark, conv))
+        except ValueError as exc:
+            errors.append(f"#{pid} {symbol}: {exc}")
+            continue
+        realized = Decimal(int(row["realized_pnl"]))
+        repo.insert_snapshot(
+            conn, snapshot_date=snapshot_date, revision=revision,
+            instrument_id=int(row["instrument_id"]), mark_price=mark,
+            price_source=row["price_source"], net_quantity=int(row["net_quantity"]),
+            avg_price=Decimal(row["avg_price"]), unrealized_pnl=valuation.net_pnl,
+            realized_pnl_cumulative=realized, signed_exposure=valuation.signed_exposure)
+        rows.append(SnapshotRow(
+            instrument_id=int(row["instrument_id"]), symbol=symbol, name=row["name"],
+            net_quantity=int(row["net_quantity"]), avg_price=Decimal(row["avg_price"]),
+            mark_price=mark, price_source=row["price_source"],
+            unrealized_pnl=valuation.net_pnl, realized_pnl_cumulative=realized,
+            signed_exposure=valuation.signed_exposure))
+    conn.commit()
+    return SnapshotResponse(snapshot_date=snapshot_date, revision=revision,
+                            rows=rows, errors=errors)
+
+
+@app.get("/api/book/history", response_model=BookHistoryOut)
+def book_history(conn: sqlite3.Connection = Depends(get_db)) -> BookHistoryOut:
+    return BookHistoryOut(rows=[
+        HistoryRow(
+            snapshot_date=r["snapshot_date"], position_count=int(r["position_count"]),
+            unrealized_pnl=Decimal(int(r["unrealized_pnl"])),
+            realized_pnl_cumulative=Decimal(int(r["realized_pnl_cumulative"])),
+            gross_exposure=Decimal(int(r["gross_exposure"])),
+            net_exposure=Decimal(int(r["net_exposure"])),
+        )
+        for r in repo.book_history(conn)
+    ])

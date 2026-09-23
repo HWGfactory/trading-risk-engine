@@ -49,22 +49,76 @@ def upsert_instrument(conn: sqlite3.Connection, *, symbol: str, name: str | None
     return int(row["id"])
 
 
-def create_position(conn: sqlite3.Connection, *, instrument_id: int, direction: str, quantity: int,
-                    entry_price: Decimal, commission_rate: Decimal, margin_rate: Decimal | None) -> int:
+def get_or_create_position(conn: sqlite3.Connection, *, instrument_id: int) -> sqlite3.Row:
+    """종목당 한 행. 없으면 빈 포지션을 만든다."""
+    conn.execute(
+        "INSERT INTO positions (instrument_id) VALUES (?) ON CONFLICT (instrument_id) DO NOTHING",
+        (instrument_id,),
+    )
+    return conn.execute(
+        "SELECT * FROM positions WHERE instrument_id = ?", (instrument_id,)
+    ).fetchone()
+
+
+def update_position(conn: sqlite3.Connection, *, position_id: int, net_quantity: int,
+                    avg_price: Decimal, realized_pnl: Decimal, entry_cost: Decimal,
+                    commission_rate: Decimal, margin_rate: Decimal | None) -> None:
+    """체결 반영 후 상태를 증분 갱신한다. 수량이 0이면 CLOSED로 닫는다."""
+    closed = net_quantity == 0
+    conn.execute(
+        """
+        UPDATE positions
+           SET net_quantity    = ?,
+               avg_price       = ?,
+               realized_pnl    = ?,
+               entry_cost      = ?,
+               commission_rate = ?,
+               margin_rate     = ?,
+               status          = ?,
+               closed_at       = CASE WHEN ? THEN datetime('now') ELSE NULL END,
+               opened_at       = CASE WHEN net_quantity = 0 AND ? <> 0
+                                      THEN datetime('now') ELSE opened_at END
+         WHERE id = ?
+        """,
+        (net_quantity, str(avg_price), _as_int(realized_pnl), _as_int(entry_cost),
+         str(commission_rate), None if margin_rate is None else str(margin_rate),
+         "CLOSED" if closed else "OPEN", closed, net_quantity, position_id),
+    )
+
+
+def insert_trade(conn: sqlite3.Connection, *, instrument_id: int, side: str, quantity: int,
+                 price: Decimal, commission_rate: Decimal, closed_quantity: int,
+                 realized_pnl: Decimal, commission: Decimal, transaction_tax: Decimal,
+                 avg_price_after: Decimal, qty_after: int) -> int:
     cur = conn.execute(
         """
-        INSERT INTO positions (instrument_id, direction, quantity, entry_price, commission_rate, margin_rate)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO trades (instrument_id, side, quantity, price, commission_rate,
+                            closed_quantity, realized_pnl, commission, transaction_tax,
+                            avg_price_after, qty_after)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (instrument_id, direction, quantity, str(entry_price), str(commission_rate),
-         None if margin_rate is None else str(margin_rate)),
+        (instrument_id, side, quantity, str(price), str(commission_rate), closed_quantity,
+         _as_int(realized_pnl), _as_int(commission), _as_int(transaction_tax),
+         str(avg_price_after), qty_after),
     )
     return int(cur.lastrowid)
 
 
+def list_trades(conn: sqlite3.Connection, instrument_id: int | None = None) -> list[sqlite3.Row]:
+    sql = """
+        SELECT t.*, i.symbol, i.name, i.asset_class, i.market, i.contract_code, i.multiplier
+        FROM trades t
+        JOIN instruments i ON i.id = t.instrument_id
+    """
+    if instrument_id is None:
+        return conn.execute(sql + " ORDER BY t.traded_at, t.id").fetchall()
+    return conn.execute(sql + " WHERE t.instrument_id = ? ORDER BY t.traded_at, t.id",
+                        (instrument_id,)).fetchall()
+
+
 _POSITION_SELECT = """
-    SELECT p.id, p.direction, p.quantity, p.entry_price, p.commission_rate, p.margin_rate,
-           p.status, p.opened_at,
+    SELECT p.id, p.net_quantity, p.avg_price, p.realized_pnl, p.entry_cost,
+           p.commission_rate, p.margin_rate, p.status, p.opened_at,
            i.id AS instrument_id, i.symbol, i.name, i.asset_class, i.market, i.contract_code, i.multiplier,
            lv.valued_at, lv.mark_price, lv.price_source, lv.price_as_of,
            lv.signed_exposure, lv.gross_pnl, lv.total_costs, lv.net_pnl
@@ -82,12 +136,8 @@ def get_position(conn: sqlite3.Connection, position_id: int) -> sqlite3.Row | No
     return conn.execute(_POSITION_SELECT + " WHERE p.id = ?", (position_id,)).fetchone()
 
 
-def close_position(conn: sqlite3.Connection, position_id: int) -> bool:
-    cur = conn.execute(
-        "UPDATE positions SET status = 'CLOSED', closed_at = datetime('now') WHERE id = ? AND status = 'OPEN'",
-        (position_id,),
-    )
-    return cur.rowcount == 1
+def find_position_by_instrument(conn: sqlite3.Connection, instrument_id: int) -> sqlite3.Row | None:
+    return conn.execute(_POSITION_SELECT + " WHERE p.instrument_id = ?", (instrument_id,)).fetchone()
 
 
 def save_price(conn: sqlite3.Connection, *, instrument_id: int, price_date: str,
@@ -144,3 +194,41 @@ def last_valued_at(conn: sqlite3.Connection) -> str | None:
         """
     ).fetchone()
     return row["last_at"] if row and row["last_at"] else None
+
+
+# ---------- 일별 스냅샷 ----------
+
+def snapshot_exists(conn: sqlite3.Connection, snapshot_date: str) -> int:
+    """해당 날짜에 이미 찍힌 스냅샷의 최대 정정본 번호. 없으면 0."""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(revision), 0) AS rev FROM daily_snapshots WHERE snapshot_date = ?",
+        (snapshot_date,),
+    ).fetchone()
+    return int(row["rev"])
+
+
+def insert_snapshot(conn: sqlite3.Connection, *, snapshot_date: str, revision: int,
+                    instrument_id: int, mark_price: Decimal, price_source: str,
+                    net_quantity: int, avg_price: Decimal, unrealized_pnl: Decimal,
+                    realized_pnl_cumulative: Decimal, signed_exposure: Decimal) -> None:
+    conn.execute(
+        """
+        INSERT INTO daily_snapshots (snapshot_date, revision, instrument_id, mark_price,
+                                     price_source, net_quantity, avg_price, unrealized_pnl,
+                                     realized_pnl_cumulative, signed_exposure)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (snapshot_date, revision, instrument_id, str(mark_price), price_source,
+         net_quantity, str(avg_price), _as_int(unrealized_pnl),
+         _as_int(realized_pnl_cumulative), _as_int(signed_exposure)),
+    )
+
+
+def book_history(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM v_book_history ORDER BY snapshot_date").fetchall()
+
+
+def realized_pnl_total(conn: sqlite3.Connection) -> Decimal:
+    """열린 포지션과 닫힌 포지션을 모두 포함한 실현손익 누적."""
+    row = conn.execute("SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM positions").fetchone()
+    return Decimal(int(row["total"]))

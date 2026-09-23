@@ -53,6 +53,9 @@ class LinearPosition:
     commission_rate: Decimal = Decimal(0)
     tax_rule: TaxRule | None = None     # 주식이면 필수
     margin_rate: Decimal | None = None  # 선물이면 선택
+    # 실제로 낸 진입 수수료. 체결 기반 포지션은 이 값을 알고 있으므로 추정하지 않는다.
+    # None이면 예전처럼 진입 명목금액 × 수수료율로 추정한다.
+    entry_commission_paid: Decimal | None = None
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
@@ -136,11 +139,17 @@ def value_linear(pos: LinearPosition) -> LinearValuation:
         ("entry_price", "mark_price", "quantity", "multiplier", "direction")))
 
     rate = pos.commission_rate
-    entry_commission = floor_won(entry_notional * rate)
     exit_commission = floor_won(mark_notional * rate)
+    if pos.entry_commission_paid is not None:
+        # 체결 이력이 있으면 실제로 낸 금액을 쓴다. 추정보다 정확하다.
+        entry_commission = pos.entry_commission_paid
+        entry_text = f"진입 실제 {fmt(entry_commission)}"
+    else:
+        entry_commission = floor_won(entry_notional * rate)
+        entry_text = f"진입 {fmt(entry_notional)} × {pct(rate)}"
     steps.append(TraceStep(
         "commission", "수수료",
-        f"진입 {fmt(entry_notional)} × {pct(rate)} + 청산 추정 {fmt(mark_notional)} × {pct(rate)}, 원 미만 절사",
+        f"{entry_text} + 청산 추정 {fmt(mark_notional)} × {pct(rate)}, 원 미만 절사",
         entry_commission + exit_commission,
         ("entry_price", "mark_price", "quantity", "multiplier", "commission_rate")))
 
