@@ -18,8 +18,11 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const BACKEND = join(ROOT, 'backend')
-const VENV_PY = join(BACKEND, '.venv', 'Scripts', 'python.exe')
 const IS_WINDOWS = process.platform === 'win32'
+const VENV_PY = IS_WINDOWS
+  ? join(BACKEND, '.venv', 'Scripts', 'python.exe')
+  : join(BACKEND, '.venv', 'bin', 'python')
+const NPM = IS_WINDOWS ? 'npm.cmd' : 'npm'
 
 let step = 0
 const say = (msg) => process.stdout.write(`\n[${++step}] ${msg}\n`)
@@ -79,7 +82,17 @@ function main() {
   if (existsSync(join(ROOT, 'frontend', 'node_modules'))) {
     skip('frontend/node_modules 가 이미 있습니다.')
   } else {
-    run('npm', ['--prefix', join(ROOT, 'frontend'), 'install'], { shell: IS_WINDOWS })
+    // npm을 셸로 부르지 않는다. Windows에서 npm은 npm.cmd라 셸이 필요한데,
+    // 셸을 쓰면 인자가 문자열로 합쳐지면서 공백이 든 경로가 쪼개진다
+    // (실제로 "clean check" 같은 경로에서 --prefix 가 깨졌다. Node도 DEP0190으로 경고한다).
+    // npm이 이 스크립트를 실행하므로 npm_execpath에 npm-cli.js 경로가 들어 있다.
+    // 그걸 node로 직접 돌리면 셸을 거치지 않아 공백 문제가 생기지 않는다.
+    const npmCli = process.env.npm_execpath
+    if (npmCli) {
+      run(process.execPath, [npmCli, 'install'], { cwd: join(ROOT, 'frontend') })
+    } else {
+      run(NPM, ['install'], { cwd: join(ROOT, 'frontend'), shell: IS_WINDOWS })
+    }
   }
 
   say('기존 DB 이전')
