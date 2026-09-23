@@ -19,21 +19,25 @@
 - 계산 라이브러리(2단계부터): QuantLib-Python
 
 ## 실행 (Windows PowerShell)
-백엔드 (터미널 1)
 ```
-cd backend
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m pytest
-.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
-```
-프론트 (터미널 2, Node 20.19+ 또는 22.12+)
-```
-cd frontend
-npm install
-npm run dev
+npm install     # 루트 런처 의존성 (최초 1회)
+npm run setup   # 가상환경, 의존성, DB 이전, 예시 북 (멱등)
+npm run dev     # 백엔드(8000)와 프론트(5173) 동시 실행, Ctrl+C 한 번에 둘 다 종료
 ```
 브라우저: http://localhost:5173  /  API 문서: http://127.0.0.1:8000/docs
+
+그 밖의 명령: `npm run check`(테스트·빌드·린트), `npm run seed`, `npm run migrate`.
+개별 실행이 필요하면 README의 "수동 실행" 절을 본다.
+
+실행 관련해 알아둘 것
+- 런처는 파이썬 실행 파일 경로를 셸 문자열로 조립하지 않는다. npm 스크립트는 Windows에서
+  `cmd /d /s /c` 로 실행되는데 따옴표와 슬래시 처리가 어긋나기 때문이다.
+  scripts/run-python.mjs 가 Node에서 인자 배열로 직접 넘긴다. 경로에 공백이 있어도 안전하다.
+- 프론트는 백엔드 포트가 열린 뒤에 시작한다(scripts/wait-for-api.mjs).
+  먼저 뜨면 첫 화면이 프록시 오류를 띄운다.
+- `npm run dev` 는 실행 전에 이전 개발 서버가 남긴 포트를 정리한다(scripts/free-ports.mjs).
+  uvicorn --reload 의 작업 프로세스가 고아로 남아 포트를 쥐는 일이 실제로 반복됐다.
+- Windows의 `python` / `python3` 는 Microsoft Store 스텁일 수 있다. 가상환경 생성은 `py -3`.
 
 ## 파일 구조
 ```
@@ -50,6 +54,12 @@ backend/
     repository.py   SQL 접근 계층
     schema.sql      테이블·뷰·감사 트리거
   tests/            pytest (엔진 정답 케이스, API 통합, 시세 폴백)
+scripts/              루트 런처 (Node, 의존성 없음)
+  setup.mjs           최초 준비 (멱등)
+  run-python.mjs      가상환경 파이썬 실행 (셸을 거치지 않음)
+  wait-for-api.mjs    백엔드 포트를 기다린다
+  free-ports.mjs      이전 개발 서버가 남긴 포트 정리
+backend/
   scripts/
     seed_demo.py          시연용 예시 북 (TestClient로 API를 그대로 통과)
     migrate_to_trades.py  기존 positions를 체결 기반 구조로 이전

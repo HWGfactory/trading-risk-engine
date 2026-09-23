@@ -19,9 +19,13 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# TestClient가 httpx를 쓴다고 알리는 안내다. 오류가 아니라서 출력만 지운다.
+warnings.filterwarnings("ignore", message=r"Using .httpx.")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

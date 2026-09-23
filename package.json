@@ -1,0 +1,22 @@
+{
+  "name": "trading-risk-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PI 데스크 포지션 평가 엔진. 백엔드와 프론트를 한 번에 띄우는 개발용 런처.",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "predev": "node scripts/free-ports.mjs",
+    "dev": "concurrently --names \"api,web\" --prefix-colors \"cyan,magenta\" --kill-others --handle-input \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node scripts/run-python.mjs -m uvicorn app.main:app --reload --port 8000 --app-dir backend",
+    "dev:web": "node scripts/wait-for-api.mjs && npm --prefix frontend run dev",
+    "test": "node scripts/run-python.mjs -m pytest backend",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "seed": "node scripts/run-python.mjs backend/scripts/seed_demo.py",
+    "migrate": "node scripts/run-python.mjs backend/scripts/migrate_to_trades.py",
+    "check": "npm run test && npm run build && npm run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

@@ -27,30 +27,76 @@ Python · FastAPI · SQLite(직접 SQL, 윈도 함수 뷰) · pykrx · pytest
 React 19 · TypeScript · Vite · Motion · Phosphor Icons · 네이티브 CSS 토큰(Tailwind 없음)
 
 ## 실행 방법 (Windows)
+
+명령 두 개면 됩니다. Node 20.19+ 또는 22.12+ 가 필요합니다.
+
 ```powershell
-# 백엔드
+npm install     # 루트 런처 의존성 (최초 1회)
+npm run setup   # 가상환경, 의존성, DB 이전, 예시 북까지 (최초 1회)
+npm run dev     # 백엔드와 프론트를 함께 실행
+```
+
+http://localhost:5173 에 접속합니다. **Ctrl+C 한 번으로 둘 다 종료됩니다.**
+
+출력에는 `api`와 `web` 접두사가 붙어 어느 쪽 로그인지 바로 구분됩니다.
+한쪽이 죽으면 다른 쪽도 함께 내려갑니다.
+
+`npm run setup`은 이미 되어 있는 단계를 건너뜁니다. 여러 번 실행해도 안전합니다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `npm run setup` | 가상환경 생성, pip install, frontend 의존성, DB 이전, 예시 북 시드 |
+| `npm run dev` | 백엔드(8000)와 프론트(5173)를 함께 실행 |
+| `npm run check` | 테스트, 빌드, 린트를 한 번에 |
+| `npm run seed` | 예시 북 다시 만들기 |
+| `npm run migrate` | 기존 DB를 체결 기반 구조로 이전 |
+
+### 알아두면 좋은 것
+
+**프론트는 백엔드가 뜬 뒤에 시작합니다.** 그러지 않으면 첫 화면이 프록시 오류로
+"백엔드에 연결하지 못했습니다"를 띄우고 새로고침해야 합니다.
+`npm run dev`가 백엔드 포트를 기다렸다가 프론트를 올립니다.
+
+**이전에 남은 개발 서버가 있으면 자동으로 정리합니다.** `uvicorn --reload`는 감시
+프로세스와 작업 프로세스를 따로 띄우는데, 터미널이 강제로 닫히면 작업 프로세스가
+포트를 쥔 채 남습니다. 그 상태로 다시 실행하면 백엔드가 "address already in use"로
+뜨지 않습니다. `npm run dev`가 실행 전에 이 경우를 확인하고 정리합니다.
+다른 프로그램이 포트를 쓰고 있으면 건드리지 않고 무엇인지 알려만 줍니다.
+
+**프로젝트 경로에 공백이 있어도 됩니다.** 실행 파일 경로를 셸 문자열로 조립하지 않고
+Node가 인자 배열로 직접 넘기기 때문입니다(`scripts/run-python.mjs`).
+
+### 수동 실행 (터미널 두 개)
+
+런처 없이 각각 띄우려면 이렇게 합니다.
+
+```powershell
+# 터미널 1 - 백엔드
 cd backend
-python -m venv .venv
+py -3 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 .venv\Scripts\python -m pytest
 .venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 
-# 프론트 (새 터미널)
+# 터미널 2 - 프론트
 cd frontend
 npm install
 npm run dev
 ```
-http://localhost:5173 에 접속합니다.
+
+> Windows에서 `python` 과 `python3` 는 Microsoft Store 스텁일 수 있습니다.
+> 실행은 되지만 아무 일도 하지 않고 끝납니다. 가상환경을 만들 때는 `py -3` 을 쓰세요.
+> `npm run setup` 은 이 경우를 스스로 판별합니다.
 
 ## 시연용 예시 북 만들기
 
+`npm run setup` 이 이미 한 번 실행합니다. 북을 다시 만들고 싶을 때 쓰는 명령입니다.
 빈 화면 대신 포지션이 채워진 상태를 보려면 시드 스크립트를 실행합니다.
 FastAPI TestClient로 앱을 프로세스 안에서 호출하므로 **서버를 띄우지 않아도 되고**,
 요청이 실제 API를 그대로 지나가 호가단위 검증 같은 규칙이 모두 적용됩니다.
 
 ```powershell
-cd backend
-.venv\Scripts\python -m scripts.seed_demo
+npm run seed
 ```
 
 삼성전자를 두 번에 나눠 사고(평균단가 274,400) 일부를 되팔아 **실현손익이 생긴 상태**를 만듭니다.
