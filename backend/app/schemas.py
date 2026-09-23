@@ -313,7 +313,10 @@ class TradeResponse(BaseModel):
 
 
 class TradePreview(BaseModel):
-    """체결 전 미리보기. 이미 보유 중이면 이번 체결 후 평균단가가 어떻게 되는지 보여준다."""
+    """체결 전 미리보기. 이미 보유 중이면 이번 체결 후 평균단가가 어떻게 되는지 보여준다.
+
+    방향 전환 여부와 수량도 함께 내려준다. 화면이 계산하지 않게 하기 위한 것이다.
+    """
     holds: bool
     net_quantity_before: int
     avg_price_before: Decimal
@@ -321,6 +324,11 @@ class TradePreview(BaseModel):
     avg_price_after: Decimal
     closed_quantity: int
     realized_gross: Decimal
+    # 방향 전환(규칙 3) 안내용. flips가 False면 나머지는 0이다.
+    flips: bool
+    opened_quantity: int              # 전환 후 새로 생기는 수량
+    direction_before: Direction | None
+    direction_after: Direction | None
     trace: list[TraceStepOut]
 
 

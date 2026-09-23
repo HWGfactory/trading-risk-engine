@@ -54,7 +54,16 @@ def main() -> int:
     conn.executescript(repo.SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()
 
-    # legacy_alter_table을 켜지 않으면 RENAME이 valuations의 참조까지 positions_old로 바꿔버린다.
+    # PRAGMA legacy_alter_table = ON 이 필요한 이유
+    #   SQLite 3.25부터 ALTER TABLE ... RENAME 은 다른 테이블의 FK 참조까지 따라서 고쳐 준다.
+    #   여기서는 그게 문제가 된다. positions를 갈아끼우려고 새 테이블을 만들고 이름을 바꾸는데,
+    #   그 과정에서 valuations.position_id 의 참조 대상이 중간 테이블 이름으로 바뀌어 버린다.
+    #   legacy_alter_table을 켜면 옛 동작(이름만 바꾸고 참조는 그대로)으로 돌아가 이 문제가 없다.
+    #
+    # 위험: 이 플래그는 SQLite를 옛 동작으로 되돌리는 것이라, 참조가 어긋난 채로 남아도
+    #   SQLite가 알려주지 않는다. 그래서 마지막에 PRAGMA foreign_key_check 로 직접 검사하고,
+    #   한 건이라도 걸리면 되돌린다. 검사 없이 이 플래그만 쓰면 안 된다.
+    #
     # 두 PRAGMA 모두 트랜잭션 밖에서 설정해야 적용된다.
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("PRAGMA legacy_alter_table = ON")
@@ -109,14 +118,26 @@ def main() -> int:
 
         conn.execute("DROP TABLE positions")
         conn.execute("ALTER TABLE positions_new RENAME TO positions")
+
+        # legacy_alter_table을 켠 채 테이블을 갈아끼웠으므로 참조가 성한지 직접 확인한다.
+        # 커밋 전에 검사해야 문제가 있을 때 되돌릴 수 있다.
+        broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if broken:
+            raise RuntimeError(
+                "외래키 참조가 깨졌습니다: "
+                + ", ".join(f"{r[0]} 행 {r[1]} → {r[2]}" for r in broken[:5])
+            )
+
         conn.commit()
-        conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute("PRAGMA foreign_keys = ON")
+        print("외래키 무결성 검사 통과 (PRAGMA foreign_key_check)")
     except Exception as exc:  # noqa: BLE001
         conn.rollback()
+        conn.execute("PRAGMA legacy_alter_table = OFF")
         print(f"[실패] {exc}")
-        print(f"백업에서 되돌리세요: copy {backup} {path}")
+        print("변경을 되돌렸습니다(rollback).")
+        print(f"그래도 DB가 이상하면 백업에서 복구하세요: copy {backup} {path}")
         return 1
 
     print(f"\n완료. 체결 {len(old)}건, 포지션 {len(old)}건을 옮겼습니다.")

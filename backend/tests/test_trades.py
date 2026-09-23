@@ -8,12 +8,14 @@ from decimal import Decimal as D
 import pytest
 
 from app.conventions import TaxRule
-from app.trades import Fill, InstrumentSpec, PositionState, apply_trade
+from app.linear import floor_won, round_won
+from app.trades import (Fill, InstrumentSpec, PositionState, _leg_costs, apply_trade)
 
 KOSPI = TaxRule("KOSPI", D("0.0005"), D("0.0015"))
 EQUITY = InstrumentSpec("EQUITY", D(1), KOSPI)
 EQUITY_FREE = InstrumentSpec("EQUITY", D(1), TaxRule("KOSPI", D(0), D(0)))
 K200 = InstrumentSpec("FUTURE", D("250000"), None)
+MINI = InstrumentSpec("FUTURE", D("50000"), None)
 
 FLAT = PositionState()
 
@@ -197,3 +199,64 @@ def test_fill_rejects_bad_input():
         Fill("BUY", 0, D("100"))
     with pytest.raises(ValueError):
         Fill("BUY", 1, D("0"))
+
+
+# ---------- 전환 체결의 비용 안분 합계 (잔여 1원 규칙) ----------
+# 원 미만 절사를 다리마다 하면 두 조각의 합이 전체 체결 기준보다 1원 작아질 수 있다.
+# 실제로 내는 돈은 체결 전체에 대한 금액이므로, 합이 항상 일치해야 한다.
+# 잔여는 청산 다리에 붙인다(실현손익에서 차감되는 쪽이라 비용이 누락되지 않는다).
+
+@pytest.mark.parametrize(
+    "price,held,fill_qty,spec,rate",
+    [
+        # 절사가 생기기 쉬운 값들: 끝자리 3·7, 홀수 수량, 1주 단위, 선물 승수
+        ("80333", 100, 150, EQUITY, D("0.00015")),      # 탐색에서 1원 차이가 났던 값
+        ("33333", 1, 3, EQUITY, D("0.00015")),          # 1주 청산 + 2주 진입
+        ("12347", 50, 101, EQUITY, D("0.00015")),       # 홀수 총수량
+        ("99999", 500, 999, EQUITY, D("0.00015")),      # 큰 홀수
+        ("402.77", 5, 13, K200, D("0.00003")),          # 승수 250,000, 홀수 계약
+        ("401.93", 12, 25, MINI, D("0.00003")),         # 승수 50,000, 홀수 계약
+        ("70007", 33, 77, EQUITY, D("0.00015")),
+        ("100003", 7, 11, EQUITY, D("0.00015")),
+    ],
+)
+def test_flip_leg_costs_sum_to_whole_fill(price, held, fill_qty, spec, rate):
+    """전환 체결에서 두 다리의 비용 합이 체결 전체 기준 비용과 정확히 같아야 한다."""
+    state = buy(FLAT, held, price, rate=rate, spec=spec).after
+    r = sell(state, fill_qty, price, rate=rate, spec=spec)
+
+    close_leg, open_leg = r.legs
+    assert close_leg.kind == "CLOSE" and open_leg.kind == "OPEN"
+    assert close_leg.quantity == held
+    assert open_leg.quantity == fill_qty - held
+
+    # 전체 체결 기준 비용 (실제로 내는 금액)
+    whole_notional = round_won(D(price) * D(fill_qty) * spec.multiplier)
+    whole_commission = floor_won(whole_notional * rate)
+    whole_tax = D(0)
+    if spec.asset_class == "EQUITY" and spec.tax_rule is not None:
+        whole_tax = (floor_won(whole_notional * spec.tax_rule.securities_tax)
+                     + floor_won(whole_notional * spec.tax_rule.rural_special_tax))
+
+    assert r.commission == whole_commission, "수수료 합이 전체 체결 기준과 다르다"
+    assert r.transaction_tax == whole_tax, "거래세 합이 전체 체결 기준과 다르다"
+    # 잔여는 청산 다리가 흡수한다. 진입 다리는 제 체결금액 기준 그대로다.
+    open_only = _leg_costs(fill_qty - held, Fill("SELL", fill_qty - held, D(price), rate), spec, "OPEN")
+    assert open_leg.commission == open_only.commission
+    assert close_leg.commission == whole_commission - open_only.commission
+
+
+def test_flip_residual_goes_to_close_leg():
+    """잔여가 실제로 생기는 값에서 청산 다리가 1원을 흡수하는지 확인한다."""
+    rate = D("0.00015")
+    state = buy(FLAT, 100, "80333", rate=rate, spec=EQUITY).after
+    r = sell(state, 150, "80333", rate=rate, spec=EQUITY)
+
+    close_leg, open_leg = r.legs
+    # 각 다리를 따로 절사하면 1,806이 되어 전체 기준 1,807보다 1원 작다
+    naive_close = floor_won(round_won(D("80333") * D(100)) * rate)
+    naive_open = floor_won(round_won(D("80333") * D(50)) * rate)
+    assert naive_close + naive_open == D("1806")
+    assert r.commission == D("1807")                     # 전체 기준과 일치
+    assert close_leg.commission == naive_close + D("1")  # 잔여 1원은 청산 다리로
+    assert open_leg.commission == naive_open

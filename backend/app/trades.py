@@ -112,10 +112,12 @@ class TradeResult:
 
 def _leg_costs(quantity: int, fill: Fill, spec: InstrumentSpec,
                kind: Literal["CLOSE", "OPEN"]) -> Leg:
-    """다리 하나의 비용.
+    """다리 하나의 비용을 그 다리의 체결금액 기준으로 계산한다.
 
-    전환 체결은 청산 다리와 진입 다리로 쪼개고, 각 다리의 체결금액에 대해 따로 계산한다.
-    절사를 다리별로 하므로 전체 금액 기준으로 한 번 절사한 값과 최대 1원 차이가 날 수 있다.
+    주의: 이 함수만으로 전환 체결을 쪼개면 안 된다. 원 미만 절사를 다리마다 하므로
+    두 다리의 합이 전체 체결 기준 금액보다 1원 작아지는 경우가 실제로 생긴다
+    (탐색 결과 12개 표본 중 6개). 실제로 내는 돈은 체결 전체에 대한 금액이므로,
+    _flip에서 전체 기준으로 먼저 계산한 뒤 차액을 청산 다리에 붙인다.
     """
     notional = round_won(fill.price * Decimal(quantity) * spec.multiplier)
     commission = floor_won(notional * fill.commission_rate)
@@ -184,9 +186,14 @@ def _increase(state: PositionState, fill: Fill, spec: InstrumentSpec,
 
 
 def _reduce(state: PositionState, fill: Fill, spec: InstrumentSpec,
-            steps: list[TraceStep], *, closing: int) -> TradeResult:
-    """규칙 2. 반대 방향 체결, 보유 수량 이내. 평균단가는 바뀌지 않는다."""
-    leg = _leg_costs(closing, fill, spec, "CLOSE")
+            steps: list[TraceStep], *, closing: int, leg: Leg | None = None) -> TradeResult:
+    """규칙 2. 반대 방향 체결, 보유 수량 이내. 평균단가는 바뀌지 않는다.
+
+    leg를 넘기면 그 비용을 그대로 쓴다. 전환 체결에서 잔여 1원을 청산 다리에
+    붙인 값을 전달하기 위한 것이다.
+    """
+    if leg is None:
+        leg = _leg_costs(closing, fill, spec, "CLOSE")
     held = abs(state.net_quantity)
     was_long = state.net_quantity > 0
 
@@ -240,11 +247,23 @@ def _reduce(state: PositionState, fill: Fill, spec: InstrumentSpec,
 
 def _flip(state: PositionState, fill: Fill, spec: InstrumentSpec,
           steps: list[TraceStep], *, closing: int) -> TradeResult:
-    """규칙 3. 반대 방향 체결, 보유 수량 초과. 한 체결 안에서 청산과 진입이 순서대로 일어난다."""
-    closed = _reduce(state, fill, spec, steps, closing=closing)
+    """규칙 3. 반대 방향 체결, 보유 수량 초과. 한 체결 안에서 청산과 진입이 순서대로 일어난다.
 
+    비용은 체결 전체 기준으로 먼저 계산한다. 실제로 내는 돈이 그 금액이기 때문이다.
+    그 다음 진입 다리를 제 체결금액으로 계산하고, 남는 차액(절사 때문에 생기는 0원 또는 1원)을
+    청산 다리에 붙인다. 이렇게 해야 두 다리의 합이 항상 전체 체결 비용과 일치한다.
+    잔여를 청산 쪽에 붙이는 이유: 실현손익에서 차감되는 쪽이라 비용이 누락되지 않는다.
+    """
     opening_qty = fill.quantity - closing
+    whole = _leg_costs(fill.quantity, fill, spec, "CLOSE")
     open_leg = _leg_costs(opening_qty, fill, spec, "OPEN")
+    close_leg = Leg(
+        kind="CLOSE", quantity=closing,
+        notional=round_won(fill.price * Decimal(closing) * spec.multiplier),
+        commission=whole.commission - open_leg.commission,
+        transaction_tax=whole.transaction_tax - open_leg.transaction_tax,
+    )
+    closed = _reduce(state, fill, spec, steps, closing=closing, leg=close_leg)
     avg = round_price(fill.price)
     sign = 1 if fill.side == "BUY" else -1
 
@@ -265,6 +284,6 @@ def _flip(state: PositionState, fill: Fill, spec: InstrumentSpec,
         realized_pnl=closed.after.realized_pnl,
         entry_cost=open_leg.commission + open_leg.transaction_tax,
     )
-    return TradeResult(before=state, after=after, legs=[closed.legs[0], open_leg],
+    return TradeResult(before=state, after=after, legs=[close_leg, open_leg],
                        realized_delta=closed.realized_delta, realized_gross=closed.realized_gross,
                        closed_quantity=closing, trace=tuple(steps))

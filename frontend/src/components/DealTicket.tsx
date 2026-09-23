@@ -2,7 +2,7 @@ import { CheckCircleIcon, WarningCircleIcon } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { api, messagesOf } from '../api'
-import { formatPrice, formatSignedWon, isNumeric, percentToRate, rateToPercent, tone } from '../format'
+import { directionLabel, formatPrice, formatSignedWon, isNumeric, percentToRate, rateToPercent, tone } from '../format'
 import { tracedClass } from '../trace'
 import type { TraceApi } from '../trace'
 import type {
@@ -395,7 +395,30 @@ export default function DealTicket({
       {preview && preview.holds && (
         <div className="preview">
           <span className="preview-label">이번 체결 후</span>
-          {preview.closed_quantity > 0 ? (
+          {preview.flips ? (
+            /* 경고가 아니라 확인이다. 오류 색을 쓰지 않고 중립 톤으로 둔다. */
+            <>
+              <span className="preview-line">
+                이 체결로 {directionLabel(preview.direction_before ?? 'LONG')}{' '}
+                <span className="num">{preview.closed_quantity}</span>
+                {isEquity ? '주' : '계약'}가 청산되고{' '}
+                {directionLabel(preview.direction_after ?? 'SHORT')}{' '}
+                <span className="num">{preview.opened_quantity}</span>
+                {isEquity ? '주' : '계약'}가 새로 생깁니다.
+              </span>
+              <span className="preview-line">
+                청산분 실현손익{' '}
+                <span className={`num tone-${tone(preview.realized_gross)}`}>
+                  {formatSignedWon(preview.realized_gross)}
+                </span>{' '}
+                <span className="cell-sub">(비용 전)</span>
+              </span>
+              <span className="preview-line">
+                새 포지션 평균단가{' '}
+                <span className="num">{formatPrice(preview.avg_price_after)}</span>
+              </span>
+            </>
+          ) : preview.closed_quantity > 0 ? (
             <>
               <span className="preview-line">
                 {preview.closed_quantity}주 청산, 실현손익{' '}

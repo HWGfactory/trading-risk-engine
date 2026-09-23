@@ -244,6 +244,12 @@ export interface TradePreview {
   avg_price_after: Dec
   closed_quantity: number
   realized_gross: Dec
+  /** 방향 전환(규칙 3) 여부. 백엔드가 판단해 내려준다. */
+  flips: boolean
+  /** 전환 후 새로 생기는 수량. flips가 false면 0. */
+  opened_quantity: number
+  direction_before: Direction | null
+  direction_after: Direction | null
   trace: TraceStep[]
 }
 

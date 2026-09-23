@@ -402,14 +402,21 @@ def preview_trade(req: TradeCreate, conn: sqlite3.Connection = Depends(get_db),
         pos_row, result, _, _ = _apply_fill(conn, req, conv, persist=False)
     finally:
         conn.rollback()
+    before_q, after_q = result.before.net_quantity, result.after.net_quantity
+    # 방향 전환은 부호가 뒤집힌 경우다. 한 체결이 청산 다리와 진입 다리로 쪼개진 상태.
+    flips = before_q != 0 and after_q != 0 and (before_q > 0) != (after_q > 0)
     return TradePreview(
-        holds=result.before.net_quantity != 0,
-        net_quantity_before=result.before.net_quantity,
+        holds=before_q != 0,
+        net_quantity_before=before_q,
         avg_price_before=result.before.avg_price,
-        net_quantity_after=result.after.net_quantity,
+        net_quantity_after=after_q,
         avg_price_after=result.after.avg_price,
         closed_quantity=result.closed_quantity,
         realized_gross=result.realized_gross,
+        flips=flips,
+        opened_quantity=abs(after_q) if flips else 0,
+        direction_before=("LONG" if before_q > 0 else "SHORT") if before_q else None,
+        direction_after=("LONG" if after_q > 0 else "SHORT") if after_q else None,
         trace=[TraceStepOut(**st.__dict__) for st in result.trace],
     )
 

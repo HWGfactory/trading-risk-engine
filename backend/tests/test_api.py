@@ -322,3 +322,28 @@ def test_trades_are_append_only(tmp_path):
         conn.execute("UPDATE trades SET quantity = 2 WHERE id = 1")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("DELETE FROM trades WHERE id = 1")
+
+
+def test_preview_reports_direction_flip(client):
+    """방향 전환 여부와 수량을 백엔드가 내려준다. 화면이 계산하지 않는다."""
+    client.post("/api/trades", json={
+        "asset_class": "EQUITY", "side": "BUY", "quantity": 100, "market": "KOSPI",
+        "symbol": "005930", "price": "70000"})
+
+    # 보유 수량 이내면 전환이 아니다
+    r = client.post("/api/trades/preview", json={
+        "asset_class": "EQUITY", "side": "SELL", "quantity": 60, "market": "KOSPI",
+        "symbol": "005930", "price": "75000"}).json()
+    assert r["flips"] is False
+    assert r["opened_quantity"] == 0
+    assert r["closed_quantity"] == 60
+
+    # 보유 수량을 넘으면 전환이다
+    r = client.post("/api/trades/preview", json={
+        "asset_class": "EQUITY", "side": "SELL", "quantity": 150, "market": "KOSPI",
+        "symbol": "005930", "price": "75000"}).json()
+    assert r["flips"] is True
+    assert r["closed_quantity"] == 100      # 매수 100주가 청산되고
+    assert r["opened_quantity"] == 50       # 매도 50주가 새로 생긴다
+    assert r["direction_before"] == "LONG"
+    assert r["direction_after"] == "SHORT"
